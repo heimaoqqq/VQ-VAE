@@ -6,7 +6,16 @@
 
 ```
 .
-├── dataset/                    # 数据集目录 
+├── dataset/                    # 数据集目录
+├── vqvae/                      # VQ-VAE模块化实现
+│   ├── models/                 # 模型定义
+│   │   ├── vqmodel.py          # VQ模型创建
+│   │   └── losses.py           # 损失函数
+│   ├── trainers/               # 训练器
+│   │   └── vqtrainer.py        # VQ模型训练器
+│   └── utils/                  # 工具函数
+│       ├── training.py         # 训练相关函数
+│       └── visualization.py    # 可视化函数
 ├── dataset.py                  # 数据集加载和处理
 ├── train_vqvae.py              # VQ-VAE模型训练脚本
 ├── train_ldm.py                # LDM扩散模型训练脚本  
@@ -113,11 +122,33 @@ python generate.py --vqvae_path vqvae_model --ldm_path ldm_model
 
 自定义Pipeline将被保存到指定的输出目录中，可以直接使用diffusers的接口加载。
 
-## 16GB GPU显存优化配置
+## GPU显存适配配置
 
-项目已针对16GB显存的GPU进行了优化配置：
+项目已针对不同显存大小的GPU进行了优化配置：
 
-### VQ-VAE模型配置
+### 6GB显存GPU配置 (例如GTX 1060)
+
+```bash
+# 6GB显存优化配置
+python train_vqvae.py \
+  --batch_size 8 \
+  --lr 1e-4 \
+  --latent_channels 4 \
+  --vq_embed_dim 4 \
+  --vq_num_embed 128 \
+  --n_layers 2 \
+  --image_size 128 \
+  --fp16  # 开启混合精度训练
+```
+
+主要优化点：
+- 降低批次大小到8或更低
+- 减小模型容量(嵌入维度和码本大小)
+- 减少下采样层数
+- 使用较小的输入尺寸
+- 启用FP16混合精度训练，提高显存利用率
+
+### 16GB+ 显存GPU配置
 
 ```bash
 # 16GB显存优化配置
@@ -125,7 +156,7 @@ python train_vqvae.py \
   --batch_size 32 \
   --lr 1e-4 \
   --latent_channels 4 \
-  --vq_embed_dim 128 \
+  --vq_embed_dim 4 \
   --vq_num_embed 256 \
   --n_layers 4 \
   --fp16  # 开启混合精度训练
@@ -135,29 +166,16 @@ python train_vqvae.py \
 
 主要优化点：
 - 批次大小增加到32
-- 增大模型容量（嵌入维度和通道数）
+- 增大模型容量（码本大小）
 - 使用所有4层下采样结构
-- 启用FP16混合精度训练，提高显存利用率
-- 结合感知损失提升重建质量
+- 启用感知损失提升重建质量
 
-### LDM模型配置
+### 重要提示
 
-```bash
-# 16GB显存优化配置
-python train_ldm.py \
-  --batch_size 32 \
-  --lr 1e-4 \
-  --latent_channels 4 \
-  --mixed_precision fp16  # 默认开启FP16
-  --save_images  # 定期保存生成结果
-```
-
-### 训练提示
-
-1. 先训练VQ-VAE模型直至收敛（重建损失稳定）
-2. 使用训练好的VQ-VAE模型训练LDM
-3. 注意监控码本利用率，理想情况下应接近100%
-4. 如显存不足，可降低批次大小或模型参数
+1. 潜在通道数(latent_channels)和VQ嵌入维度(vq_embed_dim)应该保持一致
+2. 在模型中，实际下采样倍数与层数并不完全对应，请参考控制台输出信息
+3. 对于大型数据集，建议使用更大的码本(vq_num_embed)以增强表示能力
+4. 如使用感知损失，请确保有足够的显存
 
 ## Kaggle环境使用指南
 

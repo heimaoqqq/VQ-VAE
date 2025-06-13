@@ -38,7 +38,7 @@ def parse_args():
     parser.add_argument("--save_epochs", type=int, default=5, help="每多少个epoch保存一次模型")
     parser.add_argument("--logging_steps", type=int, default=100, help="日志间隔步数")
     parser.add_argument("--latent_channels", type=int, default=4, help="潜变量通道数")
-    parser.add_argument("--vq_embed_dim", type=int, default=128, help="VQ嵌入维度")
+    parser.add_argument("--vq_embed_dim", type=int, default=4, help="VQ嵌入维度（应与latent_channels一致）")
     parser.add_argument("--vq_num_embed", type=int, default=256, help="VQ嵌入数量")
     parser.add_argument("--n_layers", type=int, default=4, help="下采样层数")
     parser.add_argument("--save_images", action="store_true", help="是否保存重建图像")
