@@ -128,8 +128,8 @@ class VQModelTrainer:
         """混合精度训练步骤"""
         self.optimizer.zero_grad()
         
-        # 使用自动混合精度
-        with torch.amp.autocast(device_type='cuda'):
+        # 使用自动混合精度，移除device_type参数提高兼容性
+        with torch.amp.autocast():
             # 前向传播
             encoder_output = self.model.encode(batch)
             decoder_output = self.model.decode(encoder_output.latents)
@@ -159,6 +159,7 @@ class VQModelTrainer:
             'loss': total_loss.item(),
             'recon_loss': reconstruction_loss.item(),
             'vq_loss': vq_loss.item(),
+            'using_fp16': True,  # 添加标记以便确认FP16正在使用
         }
         
         if self.use_perceptual:

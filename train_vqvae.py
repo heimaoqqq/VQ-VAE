@@ -101,9 +101,16 @@ def train_vqvae(args):
     if args.fp16 and args.device != "cpu":
         from torch.amp import GradScaler, autocast
         scaler = GradScaler()  # 移除device_type参数，兼容旧版PyTorch
-        print("使用混合精度训练 (FP16)")
+        print("使用混合精度训练 (FP16) - GradScaler已初始化")
+        # 检查autocast能否工作
+        try:
+            with autocast():
+                print("自动混合精度(autocast)测试成功")
+        except Exception as e:
+            print(f"警告: autocast测试失败, 原因: {e}")
     else:
         scaler = None
+        print("使用全精度训练 (FP32)")
     
     # 调试模式
     if args.debug:
@@ -134,6 +141,10 @@ def train_vqvae(args):
         epoch_vq_loss = 0.0
         epoch_perplexity = 0.0
         perplexity_count = 0
+        
+        # 检查训练精度模式
+        precision_mode = "FP16" if scaler is not None else "FP32"
+        print(f"训练精度模式: {precision_mode}")
         
         # 创建单个动态进度条
         progress_bar = tqdm(total=len(train_dataloader), 
@@ -176,6 +187,10 @@ def train_vqvae(args):
             if 'perceptual_loss' in results:
                 status_dict["percept"] = f"{results['perceptual_loss']:.4f}"
                 
+            # 添加FP16显示
+            if 'using_fp16' in results:
+                status_dict["fp16"] = "✓"
+                
             progress_bar.set_postfix(status_dict)
             progress_bar.update(1)
             
@@ -194,6 +209,10 @@ def train_vqvae(args):
                     
                 if 'perceptual_loss' in results:
                     log_dict["train/perceptual_loss"] = results['perceptual_loss']
+                    
+                # 记录FP16状态
+                if 'using_fp16' in results:
+                    log_dict["train/using_fp16"] = results['using_fp16']
                     
                 wandb.log(log_dict, step=global_step)
             
