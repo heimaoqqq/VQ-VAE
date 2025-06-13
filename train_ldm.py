@@ -44,7 +44,7 @@ def parse_args():
     parser.add_argument("--save_epochs", type=int, default=5, help="每多少个epoch保存一次模型")
     parser.add_argument("--eval_steps", type=int, default=1000, help="评估间隔步数")
     parser.add_argument("--logging_steps", type=int, default=100, help="日志间隔步数")
-    parser.add_argument("--latent_channels", type=int, default=4, help="潜变量通道数")
+    parser.add_argument("--latent_channels", type=int, default=2, help="潜变量通道数")
     parser.add_argument("--save_images", action="store_true", help="是否保存生成图像")
     parser.add_argument("--num_inference_steps", type=int, default=50, help="推理步数")
     parser.add_argument("--use_wandb", action="store_true", help="是否使用wandb记录训练")
@@ -61,13 +61,13 @@ def create_unet_model(args, vq_model):
     latent_size = args.image_size // (2 ** (len(vq_model.config.down_block_types)))
     print(f"潜在空间分辨率: {latent_size}x{latent_size}")
     
-    # 根据潜在空间大小调整UNet参数
+    # 根据潜在空间大小调整UNet参数 - 减小模型大小
     if latent_size >= 32:  # 较大的潜在空间
-        block_out_channels = (256, 512, 768, 1024)
+        block_out_channels = (128, 256, 384)  # 通道数减少
         layers_per_block = 2
     else:  # 较小的潜在空间
-        block_out_channels = (256, 512, 768) 
-        layers_per_block = 3
+        block_out_channels = (128, 256)  # 通道数减少
+        layers_per_block = 2  # 减少每个块的层数
     
     model = UNet2DModel(
         sample_size=latent_size,  # 潜在空间分辨率

@@ -18,7 +18,7 @@ def push_to_github():
         return False
     
     # 提交更改
-    commit_message = "将默认下采样层数改为3，使潜在空间尺寸默认为32x32"
+    commit_message = "减小模型大小以加快训练，保持3层下采样和32x32潜在空间:\n- 降低起始通道数从64->32\n- 降低最大通道数从512->256\n- 减少潜变量通道数从4->2\n- 减少码本大小从256->64\n- LDM模型也相应减小"
     if not run_command(f'git commit -m "{commit_message}"'):
         print("提交更改失败")
         return False

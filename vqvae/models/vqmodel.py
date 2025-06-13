@@ -13,11 +13,11 @@ def create_vq_model(args):
     down_block_types = ["DownEncoderBlock2D"] * n_layers
     up_block_types = ["UpDecoderBlock2D"] * n_layers
     
-    # 构建通道配置，每下采样一层通道数翻倍，最多到512
+    # 构建通道配置，每下采样一层通道数翻倍，最多到256
     block_out_channels = []
-    current_channels = 64  # 起始通道数调小，适合小内存GPU
+    current_channels = 32  # 起始通道数降低至32（原为64）
     for i in range(n_layers):
-        current_channels = min(current_channels * 2, 512)
+        current_channels = min(current_channels * 2, 256)  # 最大通道数降低至256（原为512）
         block_out_channels.append(current_channels)
     
     # 确保vq_embed_dim与latent_channels一致
