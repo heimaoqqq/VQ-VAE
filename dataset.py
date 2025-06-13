@@ -46,7 +46,7 @@ class MicroDopplerDataset(Dataset):
             
         return image
 
-def get_dataloaders(data_dir, batch_size=32, image_size=256, train_ratio=0.8, val_ratio=0.1):
+def get_dataloaders(data_dir, batch_size=32, image_size=256, train_ratio=0.9, val_ratio=0.1):
     """
     创建训练、验证和测试数据加载器
     
@@ -58,7 +58,7 @@ def get_dataloaders(data_dir, batch_size=32, image_size=256, train_ratio=0.8, va
         val_ratio: 验证集比例
     
     返回:
-        train_dataloader, val_dataloader, test_dataloader
+        train_dataloader, val_dataloader, test_dataloader (测试集为None)
     """
     # 定义数据转换 - 移除了RandomHorizontalFlip()，只保留基本的预处理
     transform = transforms.Compose([
@@ -70,14 +70,13 @@ def get_dataloaders(data_dir, batch_size=32, image_size=256, train_ratio=0.8, va
     # 创建数据集
     dataset = MicroDopplerDataset(data_dir, transform=transform, image_size=image_size)
     
-    # 分割数据集
+    # 分割数据集为9:1 (训练集:验证集)
     total_size = len(dataset)
     train_size = int(train_ratio * total_size)
-    val_size = int(val_ratio * total_size)
-    test_size = total_size - train_size - val_size
+    val_size = total_size - train_size
     
-    train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
-        dataset, [train_size, val_size, test_size]
+    train_dataset, val_dataset = torch.utils.data.random_split(
+        dataset, [train_size, val_size]
     )
     
     # 创建数据加载器
@@ -85,10 +84,9 @@ def get_dataloaders(data_dir, batch_size=32, image_size=256, train_ratio=0.8, va
                                  shuffle=True, num_workers=4, pin_memory=True)
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size,
                                shuffle=False, num_workers=4, pin_memory=True)
-    test_dataloader = DataLoader(test_dataset, batch_size=batch_size,
-                                shuffle=False, num_workers=4, pin_memory=True)
     
-    return train_dataloader, val_dataloader, test_dataloader
+    # 返回训练集和验证集，测试集为None
+    return train_dataloader, val_dataloader, None
 
 if __name__ == "__main__":
     # 测试数据集
@@ -100,7 +98,8 @@ if __name__ == "__main__":
     print(f"图像张量形状: {sample.shape}")
     
     # 测试数据加载器
-    train_loader, val_loader, test_loader = get_dataloaders("dataset", batch_size=16)
+    train_loader, val_loader, _ = get_dataloaders("dataset", batch_size=16)
+    print(f"训练集: {len(train_loader.dataset)}个样本 (90%)")
+    print(f"验证集: {len(val_loader.dataset)}个样本 (10%)")
     print(f"训练批次数: {len(train_loader)}")
-    print(f"验证批次数: {len(val_loader)}")
-    print(f"测试批次数: {len(test_loader)}") 
+    print(f"验证批次数: {len(val_loader)}") 

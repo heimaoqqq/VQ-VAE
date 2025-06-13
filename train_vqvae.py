@@ -220,12 +220,17 @@ class VQModelTrainer:
             if hasattr(quantize, "embedding") and hasattr(self.model, "quantize"):
                 # 计算所有潜在向量的临近码本索引
                 with torch.no_grad():
-                    batch = encoder_output.latents.permute(0, 2, 3, 1).reshape(-1, quantize.vq_embed_dim)
+                    # 获取latents并确保是float32类型，防止half和float类型不匹配
+                    latents = encoder_output.latents.to(torch.float32)
+                    batch = latents.permute(0, 2, 3, 1).reshape(-1, quantize.vq_embed_dim)
                     
-                    # 计算与码本的距离
+                    # 确保embedding权重也是float32类型
+                    embedding_weight = quantize.embedding.weight.to(torch.float32)
+                    
+                    # 计算与码本的距离 (确保都是float32类型)
                     d = torch.sum(batch ** 2, dim=1, keepdim=True) + \
-                        torch.sum(quantize.embedding.weight ** 2, dim=1) - \
-                        2 * torch.matmul(batch, quantize.embedding.weight.t())
+                        torch.sum(embedding_weight ** 2, dim=1) - \
+                        2 * torch.matmul(batch, embedding_weight.t())
                         
                     # 获取最近的码本索引
                     encoding_indices = torch.argmin(d, dim=1)
@@ -381,21 +386,17 @@ def train_vqvae(args):
         wandb.config.update(args)
 
     # 创建数据加载器
-    train_dataloader, val_dataloader, test_dataloader = get_dataloaders(
+    train_dataloader, val_dataloader, _ = get_dataloaders(
         args.data_dir, args.batch_size, args.image_size
     )
     
     # 打印数据集划分信息
     total_samples = len(train_dataloader.dataset) + len(val_dataloader.dataset)
-    if test_dataloader is not None:
-        total_samples += len(test_dataloader.dataset)
     
     print(f"数据集统计信息:")
     print(f"总样本数: {total_samples}")
     print(f"训练集: {len(train_dataloader.dataset)}个样本 ({len(train_dataloader.dataset)/total_samples*100:.1f}%), {len(train_dataloader)}个批次")
     print(f"验证集: {len(val_dataloader.dataset)}个样本 ({len(val_dataloader.dataset)/total_samples*100:.1f}%), {len(val_dataloader)}个批次")
-    if test_dataloader is not None:
-        print(f"测试集: {len(test_dataloader.dataset)}个样本 ({len(test_dataloader.dataset)/total_samples*100:.1f}%), {len(test_dataloader)}个批次")
     print(f"批次大小: {args.batch_size}")
     
     # 创建模型
@@ -450,9 +451,17 @@ def train_vqvae(args):
         epoch_loss = 0.0
         epoch_recon_loss = 0.0
         epoch_vq_loss = 0.0
-        tqdm_bar = tqdm(train_dataloader, desc=f"Epoch {epoch+1}/{args.epochs}")
+        epoch_perplexity = 0.0
+        perplexity_count = 0
         
-        for step, batch in enumerate(tqdm_bar):
+        # 创建单个动态进度条
+        progress_bar = tqdm(total=len(train_dataloader), 
+                           desc=f"Epoch {epoch+1}/{args.epochs}", 
+                           leave=True,
+                           ncols=100)
+        
+        # 遍历训练数据
+        for step, batch in enumerate(train_dataloader):
             images = batch.to(args.device)
             
             # 训练步骤
@@ -468,18 +477,44 @@ def train_vqvae(args):
             epoch_recon_loss += results['recon_loss']
             epoch_vq_loss += results['vq_loss']
             
-            # 更新进度条
-            tqdm_bar.set_postfix({
-                "loss": results['loss'],
-                "recon_loss": results['recon_loss'],
-                "vq_loss": results['vq_loss'],
-                "perceptual": results.get('perceptual_loss', 0.0)
-            })
-            
-            # 监控码本使用情况
+            # 更新码本利用率统计
             if 'perplexity' in results:
-                perplexity = results['perplexity']
-                print(f"码本利用率: {perplexity}/{args.vq_num_embed} ({perplexity/args.vq_num_embed*100:.2f}%)")
+                epoch_perplexity += results['perplexity']
+                perplexity_count += 1
+            
+            # 更新进度条，包含关键指标
+            status_dict = {
+                "loss": f"{results['loss']:.4f}",
+                "recon": f"{results['recon_loss']:.4f}",
+                "vq": f"{results['vq_loss']:.4f}"
+            }
+            
+            if 'perplexity' in results:
+                status_dict["perp"] = f"{results['perplexity']}/{args.vq_num_embed}"
+                
+            if 'perceptual_loss' in results:
+                status_dict["percept"] = f"{results['perceptual_loss']:.4f}"
+                
+            progress_bar.set_postfix(status_dict)
+            progress_bar.update(1)
+            
+            # wandb记录
+            if args.use_wandb and global_step % args.logging_steps == 0:
+                log_dict = {
+                    "train/loss": results['loss'],
+                    "train/recon_loss": results['recon_loss'],
+                    "train/vq_loss": results['vq_loss'],
+                    "train/step": global_step
+                }
+                
+                if 'perplexity' in results:
+                    log_dict["train/perplexity"] = results['perplexity']
+                    log_dict["train/codebook_usage"] = results['perplexity'] / args.vq_num_embed
+                    
+                if 'perceptual_loss' in results:
+                    log_dict["train/perceptual_loss"] = results['perceptual_loss']
+                    
+                wandb.log(log_dict, step=global_step)
             
             # 保存重建图像
             if args.save_images and global_step % args.logging_steps == 0:
@@ -492,158 +527,220 @@ def train_vqvae(args):
                     images_dir
                 )
                 
-                print(f"重建图像已保存到: {img_path}")
-                
                 if args.use_wandb:
                     wandb.log({
                         "reconstruction": wandb.Image(img_path)
                     }, step=global_step)
             
-            # 记录日志
-            if args.use_wandb and global_step % args.logging_steps == 0:
-                log_dict = {
-                    "train/loss": results['loss'],
-                    "train/recon_loss": results['recon_loss'],
-                    "train/vq_loss": results['vq_loss'],
-                    "train/epoch": epoch,
-                    "train/step": global_step,
-                }
-                if 'perceptual_loss' in results:
-                    log_dict["train/perceptual_loss"] = results['perceptual_loss']
-                if 'perplexity' in results:
-                    log_dict["train/perplexity"] = results['perplexity']
-                wandb.log(log_dict, step=global_step)
+            # 验证
+            if global_step > 0 and global_step % args.eval_steps == 0:
+                val_results = validate(
+                    val_dataloader, 
+                    trainer, 
+                    args.device, 
+                    global_step,
+                    args.use_wandb,
+                    args.save_images,
+                    images_dir,
+                    epoch
+                )
+                
+                # 获取验证重建损失
+                val_recon_loss = val_results['recon_loss']
+                progress_bar.write(f"验证损失: {val_results['loss']:.4f}, 重建损失: {val_recon_loss:.4f}, VQ损失: {val_results['vq_loss']:.4f}")
+                
+                if args.use_wandb:
+                    wandb.log({
+                        "val/loss": val_results['loss'],
+                        "val/recon_loss": val_recon_loss,
+                        "val/vq_loss": val_results['vq_loss'],
+                    }, step=global_step)
+                
+                # 检查是否为最佳验证损失
+                if val_recon_loss < best_val_recon_loss:
+                    best_val_recon_loss = val_recon_loss
+                    early_stop_counter = 0
+                    
+                    # 保存最佳模型
+                    if best_model_path:
+                        # 删除之前的最佳模型
+                        if os.path.exists(best_model_path):
+                            shutil.rmtree(best_model_path)
+                    
+                    # 保存新的最佳模型
+                    best_model_path = os.path.join(args.output_dir, "best-model")
+                    model.save_pretrained(best_model_path)
+                    progress_bar.write(f"新的最佳模型已保存到 {best_model_path} (验证重建损失: {best_val_recon_loss:.6f})")
+                    
+                    if args.use_wandb:
+                        wandb.log({
+                            "best_val_recon_loss": best_val_recon_loss
+                        }, step=global_step)
+                else:
+                    early_stop_counter += 1
+                    progress_bar.write(f"验证损失未改善，当前最佳: {best_val_recon_loss:.6f}, 早停计数: {early_stop_counter}/3")
+                    
+                    # 检查是否触发早停
+                    if early_stop_counter >= 3:
+                        progress_bar.write(f"触发早停！验证损失连续3次评估未改善。")
+                        break
             
+            # 更新全局步数
             global_step += 1
-            
-            if global_step >= args.num_train_steps:
-                break
         
-        # 计算平均损失
+        # 关闭进度条
+        progress_bar.close()
+        
+        # 计算并显示平均损失
         avg_loss = epoch_loss / len(train_dataloader)
         avg_recon_loss = epoch_recon_loss / len(train_dataloader)
         avg_vq_loss = epoch_vq_loss / len(train_dataloader)
-        print(f"Epoch {epoch+1} 平均损失: {avg_loss:.6f}, 重建: {avg_recon_loss:.6f}, VQ: {avg_vq_loss:.6f}")
         
-        # 验证
-        if val_dataloader:
-            val_results = validate(val_dataloader, trainer, args.device, global_step, args.use_wandb, args.save_images, images_dir, epoch)
-            val_recon_loss = val_results['recon_loss']
-            print(f"验证损失: {val_results['loss']:.6f}, 重建损失: {val_recon_loss:.6f}, VQ损失: {val_results['vq_loss']:.6f}")
-            
-            # 检查是否为最佳验证重建损失
-            if val_recon_loss < best_val_recon_loss:
-                best_val_recon_loss = val_recon_loss
-                early_stop_counter = 0
-                
-                # 保存最佳模型
-                # 先删除之前的最佳模型
-                if best_model_path and os.path.exists(best_model_path):
-                    if os.path.isdir(best_model_path):
-                        shutil.rmtree(best_model_path)
-                
-                # 保存新的最佳模型
-                best_model_path = os.path.join(args.output_dir, "best_model")
-                model.save_pretrained(best_model_path)
-                print(f"新的最佳模型已保存到 {best_model_path} (验证重建损失: {best_val_recon_loss:.6f})")
-                
-                if args.use_wandb:
-                    wandb.log({"best_val_recon_loss": best_val_recon_loss}, step=global_step)
-            else:
-                early_stop_counter += 1
-                print(f"验证重建损失未改善。早停计数器: {early_stop_counter}/3")
-                
-                # 检查是否触发早停
-                if early_stop_counter >= 3:
-                    print(f"触发早停！验证重建损失连续3轮未改善。")
-                    break
+        print(f"Epoch {epoch+1} 平均损失: {avg_loss:.6f}, 重建损失: {avg_recon_loss:.6f}, VQ损失: {avg_vq_loss:.6f}")
+        
+        # 显示平均码本利用率
+        if perplexity_count > 0:
+            avg_perplexity = epoch_perplexity / perplexity_count
+            usage_percent = avg_perplexity / args.vq_num_embed * 100
+            print(f"平均码本利用率: {avg_perplexity:.1f}/{args.vq_num_embed} ({usage_percent:.2f}%)")
         
         # 每save_epochs轮保存一次模型
         if (epoch + 1) % args.save_epochs == 0:
-            # 删除之前可能存在的轮数保存模型
-            previous_epoch_model = os.path.join(args.output_dir, f"vqmodel_epoch_{epoch + 1 - args.save_epochs}")
-            if os.path.exists(previous_epoch_model):
-                if os.path.isdir(previous_epoch_model):
-                    shutil.rmtree(previous_epoch_model)
-            
-            # 保存新的轮数模型
-            model_path = os.path.join(args.output_dir, f"vqmodel_epoch_{epoch + 1}")
+            # 删除之前的轮数保存
+            previous_epoch_path = os.path.join(args.output_dir, f"epoch-{epoch + 1 - args.save_epochs}")
+            if os.path.exists(previous_epoch_path):
+                shutil.rmtree(previous_epoch_path)
+                
+            # 保存新模型
+            model_path = os.path.join(args.output_dir, f"epoch-{epoch + 1}")
             model.save_pretrained(model_path)
             print(f"Epoch {epoch+1} 模型已保存到 {model_path}")
         
-        if global_step >= args.num_train_steps:
-            break
-
+        # 执行全面验证
+        val_results = validate(
+            val_dataloader, 
+            trainer, 
+            args.device, 
+            global_step,
+            args.use_wandb,
+            args.save_images,
+            images_dir,
+            epoch
+        )
+        
+        val_recon_loss = val_results['recon_loss']
+        print(f"Epoch {epoch+1} 验证结果: 总损失={val_results['loss']:.6f}, 重建损失={val_recon_loss:.6f}, VQ损失={val_results['vq_loss']:.6f}")
+        
+        if args.use_wandb:
+            wandb.log({
+                "epoch": epoch + 1,
+                "val/epoch_loss": val_results['loss'],
+                "val/epoch_recon_loss": val_recon_loss,
+                "val/epoch_vq_loss": val_results['vq_loss'],
+                "train/epoch_loss": avg_loss,
+                "train/epoch_recon_loss": avg_recon_loss,
+                "train/epoch_vq_loss": avg_vq_loss
+            }, step=global_step)
+        
+        # 检查是否为最佳验证损失
+        if val_recon_loss < best_val_recon_loss:
+            best_val_recon_loss = val_recon_loss
+            early_stop_counter = 0
+            
+            # 保存最佳模型
+            if best_model_path:
+                # 删除之前的最佳模型
+                if os.path.exists(best_model_path):
+                    shutil.rmtree(best_model_path)
+            
+            # 保存新的最佳模型
+            best_model_path = os.path.join(args.output_dir, "best-model")
+            model.save_pretrained(best_model_path)
+            print(f"新的最佳模型已保存到 {best_model_path} (验证重建损失: {best_val_recon_loss:.6f})")
+            
+            if args.use_wandb:
+                wandb.log({
+                    "best_val_recon_loss": best_val_recon_loss
+                }, step=global_step)
+        else:
+            early_stop_counter += 1
+            print(f"验证损失未改善，当前最佳: {best_val_recon_loss:.6f}, 早停计数: {early_stop_counter}/3")
+            
+            # 检查是否触发早停
+            if early_stop_counter >= 3:
+                print(f"触发早停！验证损失连续3次评估未改善。")
+                break
+    
     # 保存最终模型
     model.save_pretrained(args.output_dir)
     print(f"最终模型已保存到 {args.output_dir}")
     
-    # 打印最佳验证结果
-    print(f"训练结束。最佳验证重建损失: {best_val_recon_loss:.6f}")
+    # 训练结束
+    print(f"训练结束，最佳验证重建损失: {best_val_recon_loss:.6f}")
+    if args.use_wandb:
+        wandb.finish()
 
+@torch.no_grad()
 def validate(dataloader, trainer, device, global_step, use_wandb=False, save_images=False, images_dir=None, epoch=0):
     """验证模型"""
     trainer.model.eval()
     val_loss = 0.0
     val_recon_loss = 0.0
     val_vq_loss = 0.0
+    val_perceptual_loss = 0.0
     val_perplexity = 0.0
     perplexity_count = 0
+    all_results = []
     
-    with torch.no_grad():
-        for batch_idx, batch in enumerate(dataloader):
-            images = batch.to(device)
-            results, reconstructed = trainer.eval_step(images)
-            
-            val_loss += results['loss']
-            val_recon_loss += results['recon_loss']
-            val_vq_loss += results['vq_loss']
-            
-            if 'perplexity' in results:
-                val_perplexity += results['perplexity']
-                perplexity_count += 1
-            
-            # 只保存第一个批次的重建图像
-            if save_images and batch_idx == 0 and images_dir:
-                img_path = save_reconstructed_images(
-                    images.detach().cpu(),
-                    reconstructed.detach().cpu(),
-                    epoch,
-                    f"val_{global_step}",
-                    images_dir
-                )
-                
-                if use_wandb:
-                    wandb.log({
-                        "validation_reconstruction": wandb.Image(img_path)
-                    }, step=global_step)
+    # 只显示一个进度条
+    val_bar = tqdm(dataloader, desc="验证中", leave=False)
     
-    # 计算平均值
+    for batch in val_bar:
+        images = batch.to(device)
+        results, reconstructed = trainer.eval_step(images)
+        
+        # 累加损失
+        val_loss += results['loss']
+        val_recon_loss += results['recon_loss']
+        val_vq_loss += results['vq_loss']
+        
+        if 'perceptual_loss' in results:
+            val_perceptual_loss += results['perceptual_loss']
+        
+        if 'perplexity' in results:
+            val_perplexity += results['perplexity']
+            perplexity_count += 1
+        
+        all_results.append(results)
+        
+        # 更新进度条
+        val_bar.set_postfix({
+            "loss": f"{results['loss']:.4f}",
+            "recon": f"{results['recon_loss']:.4f}"
+        })
+    
+    # 计算平均损失
+    num_batches = len(dataloader)
+    avg_loss = val_loss / num_batches
+    avg_recon_loss = val_recon_loss / num_batches
+    avg_vq_loss = val_vq_loss / num_batches
+    
+    # 计算平均感知损失（如果使用了感知损失）
     results = {
-        'loss': val_loss / len(dataloader),
-        'recon_loss': val_recon_loss / len(dataloader),
-        'vq_loss': val_vq_loss / len(dataloader)
+        'loss': avg_loss,
+        'recon_loss': avg_recon_loss,
+        'vq_loss': avg_vq_loss,
     }
     
-    # 打印码本使用情况
     if perplexity_count > 0:
         avg_perplexity = val_perplexity / perplexity_count
-        print(f"验证码本利用率: {avg_perplexity:.2f}")
         results['perplexity'] = avg_perplexity
-        
-        if use_wandb:
-            wandb.log({
-                "val/perplexity": avg_perplexity,
-            }, step=global_step)
     
-    if use_wandb:
-        log_dict = {
-            "val/loss": results['loss'],
-            "val/recon_loss": results['recon_loss'],
-            "val/vq_loss": results['vq_loss']
-        }
-        wandb.log(log_dict, step=global_step)
+    if val_perceptual_loss > 0:
+        avg_perceptual_loss = val_perceptual_loss / num_batches
+        results['perceptual_loss'] = avg_perceptual_loss
     
+    # 返回结果
     return results
 
 if __name__ == "__main__":
