@@ -128,8 +128,15 @@ class VQModelTrainer:
         """混合精度训练步骤"""
         self.optimizer.zero_grad()
         
-        # 使用自动混合精度，移除device_type参数提高兼容性
-        with torch.amp.autocast():
+        # 使用自动混合精度，尝试兼容新旧版本的API
+        try:
+            # 尝试使用新版API (需要device_type参数)
+            autocast_context = torch.amp.autocast(device_type=self.device.type if hasattr(self.device, 'type') else 'cuda')
+        except TypeError:
+            # 回退到旧版API (不需要device_type参数)
+            autocast_context = torch.amp.autocast()
+        
+        with autocast_context:
             # 前向传播
             encoder_output = self.model.encode(batch)
             decoder_output = self.model.decode(encoder_output.latents)

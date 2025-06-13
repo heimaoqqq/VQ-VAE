@@ -104,10 +104,18 @@ def train_vqvae(args):
         print("使用混合精度训练 (FP16) - GradScaler已初始化")
         # 检查autocast能否工作
         try:
-            with autocast():
-                print("自动混合精度(autocast)测试成功")
+            # 尝试兼容新旧版本的autocast
+            try:
+                with autocast(device_type='cuda'):  # 新API需要device_type
+                    print("自动混合精度(autocast)测试成功 - 使用新版API")
+            except TypeError:
+                with autocast():  # 旧API不需要device_type
+                    print("自动混合精度(autocast)测试成功 - 使用旧版API")
         except Exception as e:
             print(f"警告: autocast测试失败, 原因: {e}")
+            print("将退回到FP32全精度训练")
+            args.fp16 = False
+            scaler = None
     else:
         scaler = None
         print("使用全精度训练 (FP32)")

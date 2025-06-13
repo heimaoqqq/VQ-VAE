@@ -18,7 +18,7 @@ def push_to_github():
         return False
     
     # 提交更改
-    commit_message = "修复GradScaler兼容性问题: 移除device_type参数以兼容较早版本的PyTorch"
+    commit_message = "修复autocast兼容性问题: 添加对新旧PyTorch版本的自适应支持"
     if not run_command(f'git commit -m "{commit_message}"'):
         print("提交更改失败")
         return False
