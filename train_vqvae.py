@@ -108,7 +108,6 @@ def parse_args():
     parser.add_argument("--num_train_steps", type=int, default=None, help="训练步数")
     parser.add_argument("--save_epochs", type=int, default=5, help="每多少个epoch保存一次模型")
     parser.add_argument("--logging_steps", type=int, default=100, help="日志间隔步数")
-    parser.add_argument("--eval_steps", type=int, default=500, help="验证间隔步数")
     parser.add_argument("--latent_channels", type=int, default=4, help="潜变量通道数")
     parser.add_argument("--vq_embed_dim", type=int, default=128, help="VQ嵌入维度")
     parser.add_argument("--vq_num_embed", type=int, default=256, help="VQ嵌入数量")
@@ -533,59 +532,6 @@ def train_vqvae(args):
                         "reconstruction": wandb.Image(img_path)
                     }, step=global_step)
             
-            # 验证
-            if global_step > 0 and global_step % args.eval_steps == 0:
-                val_results = validate(
-                    val_dataloader, 
-                    trainer, 
-                    args.device, 
-                    global_step,
-                    args.use_wandb,
-                    args.save_images,
-                    images_dir,
-                    epoch
-                )
-                
-                # 获取验证重建损失
-                val_recon_loss = val_results['recon_loss']
-                progress_bar.write(f"验证损失: {val_results['loss']:.4f}, 重建损失: {val_recon_loss:.4f}, VQ损失: {val_results['vq_loss']:.4f}")
-                
-                if args.use_wandb:
-                    wandb.log({
-                        "val/loss": val_results['loss'],
-                        "val/recon_loss": val_recon_loss,
-                        "val/vq_loss": val_results['vq_loss'],
-                    }, step=global_step)
-                
-                # 检查是否为最佳验证损失
-                if val_recon_loss < best_val_recon_loss:
-                    best_val_recon_loss = val_recon_loss
-                    early_stop_counter = 0
-                    
-                    # 保存最佳模型
-                    if best_model_path:
-                        # 删除之前的最佳模型
-                        if os.path.exists(best_model_path):
-                            shutil.rmtree(best_model_path)
-                    
-                    # 保存新的最佳模型
-                    best_model_path = os.path.join(args.output_dir, "best-model")
-                    model.save_pretrained(best_model_path)
-                    progress_bar.write(f"新的最佳模型已保存到 {best_model_path} (验证重建损失: {best_val_recon_loss:.6f})")
-                    
-                    if args.use_wandb:
-                        wandb.log({
-                            "best_val_recon_loss": best_val_recon_loss
-                        }, step=global_step)
-                else:
-                    early_stop_counter += 1
-                    progress_bar.write(f"验证损失未改善，当前最佳: {best_val_recon_loss:.6f}, 早停计数: {early_stop_counter}/3")
-                    
-                    # 检查是否触发早停
-                    if early_stop_counter >= 3:
-                        progress_bar.write(f"触发早停！验证损失连续3次评估未改善。")
-                        break
-            
             # 更新全局步数
             global_step += 1
         
@@ -617,7 +563,7 @@ def train_vqvae(args):
             model.save_pretrained(model_path)
             print(f"Epoch {epoch+1} 模型已保存到 {model_path}")
         
-        # 执行全面验证
+        # 执行全面验证 - 每轮结束后验证一次
         val_results = validate(
             val_dataloader, 
             trainer, 
