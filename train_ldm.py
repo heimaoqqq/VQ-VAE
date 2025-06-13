@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from torch.optim import AdamW
 from tqdm import tqdm
 import sys
+import shutil
 
 # 添加版本兼容性检查
 try:
@@ -40,7 +41,7 @@ def parse_args():
     parser.add_argument("--epochs", type=int, default=100, help="训练轮数")
     parser.add_argument("--lr", type=float, default=1e-4, help="学习率")
     parser.add_argument("--num_train_steps", type=int, default=None, help="训练步数")
-    parser.add_argument("--save_steps", type=int, default=500, help="保存间隔步数")
+    parser.add_argument("--save_epochs", type=int, default=5, help="每多少个epoch保存一次模型")
     parser.add_argument("--eval_steps", type=int, default=1000, help="评估间隔步数")
     parser.add_argument("--logging_steps", type=int, default=100, help="日志间隔步数")
     parser.add_argument("--latent_channels", type=int, default=4, help="潜变量通道数")
@@ -175,6 +176,11 @@ def train_ldm(args):
     if args.num_train_steps is None:
         args.num_train_steps = args.epochs * len(train_dataloader)
     
+    # 初始化早停相关变量
+    best_val_loss = float('inf')
+    best_model_path = None
+    early_stop_counter = 0
+    
     # 训练循环
     global_step = 0
     for epoch in range(args.epochs):
@@ -243,21 +249,6 @@ def train_ldm(args):
                         "generated_samples": wandb.Image(img_path)
                     }, step=global_step)
             
-            # 保存模型
-            if (global_step > 0 and global_step % args.save_steps == 0) or global_step == args.num_train_steps - 1:
-                # 先解除分布式包装
-                unwrapped_model = accelerator.unwrap_model(model)
-                pipeline = DDPMPipeline(
-                    unet=unwrapped_model,
-                    scheduler=noise_scheduler
-                )
-                
-                # 保存模型和pipeline
-                save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
-                accelerator.save_state(save_path)
-                pipeline.save_pretrained(os.path.join(args.output_dir, f"pipeline-{global_step}"))
-                print(f"保存模型到 {save_path}")
-            
             global_step += 1
             
             if global_step >= args.num_train_steps:
@@ -273,6 +264,79 @@ def train_ldm(args):
             
             if args.use_wandb:
                 accelerator.log({"val/loss": val_loss}, step=global_step)
+            
+            # 检查是否为最佳验证损失
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                early_stop_counter = 0
+                
+                # 保存最佳模型
+                # 先删除之前的最佳模型
+                if best_model_path:
+                    best_checkpoint_path = os.path.join(args.output_dir, "best-checkpoint")
+                    best_pipeline_path = os.path.join(args.output_dir, "best-pipeline")
+                    
+                    if os.path.exists(best_checkpoint_path):
+                        shutil.rmtree(best_checkpoint_path)
+                    
+                    if os.path.exists(best_pipeline_path):
+                        shutil.rmtree(best_pipeline_path)
+                
+                # 保存新的最佳模型
+                # 先解除分布式包装
+                unwrapped_model = accelerator.unwrap_model(model)
+                pipeline = DDPMPipeline(
+                    unet=unwrapped_model,
+                    scheduler=noise_scheduler
+                )
+                
+                # 保存模型和pipeline
+                best_checkpoint_path = os.path.join(args.output_dir, "best-checkpoint")
+                best_pipeline_path = os.path.join(args.output_dir, "best-pipeline")
+                best_model_path = best_checkpoint_path  # 记录路径
+                
+                accelerator.save_state(best_checkpoint_path)
+                pipeline.save_pretrained(best_pipeline_path)
+                print(f"新的最佳模型已保存到 {best_checkpoint_path} (验证损失: {best_val_loss:.6f})")
+                
+                if args.use_wandb:
+                    accelerator.log({"best_val_loss": best_val_loss}, step=global_step)
+            else:
+                early_stop_counter += 1
+                print(f"验证损失未改善。早停计数器: {early_stop_counter}/3")
+                
+                # 检查是否触发早停
+                if early_stop_counter >= 3:
+                    print(f"触发早停！验证损失连续3轮未改善。")
+                    break
+        
+        # 每save_epochs轮保存一次模型
+        if (epoch + 1) % args.save_epochs == 0:
+            # 删除之前可能存在的轮数保存模型
+            previous_epoch_checkpoint = os.path.join(args.output_dir, f"checkpoint-epoch-{epoch + 1 - args.save_epochs}")
+            previous_epoch_pipeline = os.path.join(args.output_dir, f"pipeline-epoch-{epoch + 1 - args.save_epochs}")
+            
+            if os.path.exists(previous_epoch_checkpoint):
+                shutil.rmtree(previous_epoch_checkpoint)
+            
+            if os.path.exists(previous_epoch_pipeline):
+                shutil.rmtree(previous_epoch_pipeline)
+            
+            # 保存新的轮数模型
+            # 先解除分布式包装
+            unwrapped_model = accelerator.unwrap_model(model)
+            pipeline = DDPMPipeline(
+                unet=unwrapped_model,
+                scheduler=noise_scheduler
+            )
+            
+            # 保存模型和pipeline
+            save_path = os.path.join(args.output_dir, f"checkpoint-epoch-{epoch + 1}")
+            pipeline_path = os.path.join(args.output_dir, f"pipeline-epoch-{epoch + 1}")
+            
+            accelerator.save_state(save_path)
+            pipeline.save_pretrained(pipeline_path)
+            print(f"Epoch {epoch+1} 模型已保存到 {save_path}")
         
         if global_step >= args.num_train_steps:
             break
@@ -285,6 +349,9 @@ def train_ldm(args):
     )
     pipeline.save_pretrained(args.output_dir)
     print(f"最终模型已保存到 {args.output_dir}")
+    
+    # 打印最佳验证结果
+    print(f"训练结束。最佳验证损失: {best_val_loss:.6f}")
 
 def validate(model, vq_model, dataloader, noise_scheduler, accelerator):
     """验证模型"""
