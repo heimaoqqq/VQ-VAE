@@ -8,8 +8,8 @@
 
 ```python
 # 克隆项目
-!git clone https://github.com/heimaoqqq/VA-VAE.git
-%cd VA-VAE
+!git clone https://github.com/heimaoqqq/VQ-VAE.git
+%cd VQ-VAE
 
 # 设置环境
 !python kaggle_setup.py
@@ -67,7 +67,10 @@
 如遇到依赖问题，执行：
 
 ```python
-!pip install huggingface_hub==0.16.4 diffusers==0.26.3 torch==2.0.0 --force-reinstall
+# 安装兼容版本的依赖
+!pip install huggingface_hub>=0.20.2
+!pip install diffusers>=0.26.3 --no-deps
+!pip install torch torchvision
 ```
 
-由于Kaggle笔记本环境会话结束时状态会丢失，请注意随时保存模型文件和生成结果。 
+由于Kaggle笔记本环境会话结束时状态会丢失，请注意定期保存模型文件和生成结果。另外，如果需要使用GPU加速，可以在Kaggle设置中启用GPU。 

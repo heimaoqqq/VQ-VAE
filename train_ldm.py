@@ -18,7 +18,8 @@ try:
 except ImportError as e:
     if "cannot import name 'cached_download' from 'huggingface_hub'" in str(e):
         print("检测到huggingface_hub版本不兼容。尝试安装兼容版本...")
-        os.system("pip install huggingface_hub==0.16.4 diffusers==0.26.3 --force-reinstall")
+        os.system("pip install huggingface_hub>=0.20.2")
+        os.system("pip install diffusers>=0.26.3 --no-deps")
         print("请重新运行脚本")
         sys.exit(1)
     else:

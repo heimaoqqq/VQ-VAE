@@ -12,9 +12,11 @@ def setup_kaggle_environment():
     """配置Kaggle环境"""
     print("正在配置Kaggle环境...")
     
-    # 安装指定版本依赖
+    # 先安装较新版本的huggingface_hub
     print("安装兼容版本依赖...")
-    os.system("pip install huggingface_hub==0.16.4 diffusers==0.26.3 torch==2.0.0 torchvision==0.15.1 --force-reinstall")
+    os.system("pip install huggingface_hub>=0.20.2")
+    os.system("pip install diffusers>=0.26.3 --no-deps")
+    os.system("pip install torch torchvision")
     
     # 环境测试
     print("测试环境配置...")
@@ -44,6 +46,9 @@ if __name__ == "__main__":
             print("python train_vqvae.py --data_dir /kaggle/input/your-dataset --kaggle --fp16 --batch_size 16")
             print("python train_ldm.py --data_dir /kaggle/input/your-dataset --kaggle --vqvae_model_path vqvae_model")
         else:
-            print("\n环境配置失败，请手动安装依赖")
+            print("\n环境配置失败，请尝试手动安装依赖:")
+            print("!pip install huggingface_hub>=0.20.2")
+            print("!pip install diffusers")
+            print("!pip install torch torchvision")
     else:
         print("非Kaggle环境，无需特殊配置") 
