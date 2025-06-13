@@ -27,6 +27,24 @@ def setup_kaggle_environment():
         
         print(f"PyTorch版本: {torch.__version__}")
         print(f"Diffusers版本: {diffusers.__version__}")
+        
+        # 预下载预训练VGG模型用于感知损失
+        print("正在预下载VGG16模型用于感知损失...")
+        import torchvision.models as models
+        try:
+            # 预载VGG16模型以确保感知损失可用
+            try:
+                # 新版API
+                from torchvision.models import VGG16_Weights
+                vgg = models.vgg16(weights=VGG16_Weights.IMAGENET1K_V1)
+            except ImportError:
+                # 旧版API兼容
+                vgg = models.vgg16(pretrained=True)
+            print("VGG16模型下载成功")
+        except Exception as e:
+            print(f"VGG16模型下载失败: {e}")
+            print("训练时可能无法使用感知损失，但不影响基本功能")
+        
         print("环境配置成功!")
         return True
     except ImportError as e:
@@ -44,6 +62,8 @@ if __name__ == "__main__":
         if success:
             print("\n您可以使用以下命令训练模型:")
             print("python train_vqvae.py --data_dir /kaggle/input/your-dataset --kaggle --fp16 --batch_size 16")
+            print("# 使用感知损失进行训练:")
+            print("python train_vqvae.py --data_dir /kaggle/input/your-dataset --kaggle --fp16 --batch_size 16 --use_perceptual --lambda_perceptual 0.1")
             print("python train_ldm.py --data_dir /kaggle/input/your-dataset --kaggle --vqvae_model_path vqvae_model")
         else:
             print("\n环境配置失败，请尝试手动安装依赖:")

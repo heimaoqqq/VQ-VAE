@@ -33,7 +33,14 @@ class PerceptualLoss(torch.nn.Module):
     def __init__(self, device, resize=True):
         super(PerceptualLoss, self).__init__()
         # 加载预训练的VGG16模型
-        vgg = models.vgg16(pretrained=True).features.to(device)
+        try:
+            # 新版API
+            from torchvision.models import VGG16_Weights
+            vgg = models.vgg16(weights=VGG16_Weights.IMAGENET1K_V1).features.to(device)
+        except ImportError:
+            # 旧版API兼容
+            vgg = models.vgg16(pretrained=True).features.to(device)
+            
         vgg.eval()
         # 冻结VGG参数
         for param in vgg.parameters():
