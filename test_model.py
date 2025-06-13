@@ -13,7 +13,7 @@ def test_model():
     
     # 创建参数对象
     args = argparse.Namespace(
-        batch_size=8,
+        batch_size=4
         image_size=256,
         n_layers=2,
         latent_channels=4,
