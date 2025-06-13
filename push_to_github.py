@@ -1,31 +1,35 @@
 """
-将本地更改推送到GitHub
+将修改推送到GitHub
 """
-import os
+
 import subprocess
 
-def run_cmd(cmd):
-    """运行命令并打印输出"""
+def run_command(cmd):
+    """运行Shell命令"""
     print(f"执行: {cmd}")
-    process = subprocess.run(cmd, shell=True, text=True, capture_output=True)
-    print(process.stdout)
-    if process.stderr:
-        print(f"错误: {process.stderr}")
-    return process.returncode
+    process = subprocess.run(cmd, shell=True, text=True)
+    return process.returncode == 0
 
 def push_to_github():
     """提交更改并推送到GitHub"""
     # 添加所有更改
-    run_cmd("git add .")
+    if not run_command("git add ."):
+        print("添加文件失败")
+        return False
     
     # 提交更改
-    commit_message = "修复VQ-VAE下采样倍数计算，确保正确的潜在空间尺寸"
-    run_cmd(f'git commit -m "{commit_message}"')
+    commit_message = "将默认下采样层数改为3，使潜在空间尺寸默认为32x32"
+    if not run_command(f'git commit -m "{commit_message}"'):
+        print("提交更改失败")
+        return False
     
     # 推送到GitHub
-    run_cmd("git push")
+    if not run_command("git push"):
+        print("推送到GitHub失败")
+        return False
     
-    print("已成功将更改推送到GitHub")
+    print("成功将更改推送到GitHub!")
+    return True
 
 if __name__ == "__main__":
     push_to_github() 

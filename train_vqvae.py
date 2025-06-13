@@ -40,7 +40,7 @@ def parse_args():
     parser.add_argument("--latent_channels", type=int, default=4, help="潜变量通道数")
     parser.add_argument("--vq_embed_dim", type=int, default=4, help="VQ嵌入维度（应与latent_channels一致）")
     parser.add_argument("--vq_num_embed", type=int, default=256, help="VQ嵌入数量")
-    parser.add_argument("--n_layers", type=int, default=4, help="下采样层数")
+    parser.add_argument("--n_layers", type=int, default=3, help="下采样层数")
     parser.add_argument("--save_images", action="store_true", help="是否保存重建图像")
     parser.add_argument("--use_wandb", action="store_true", help="是否使用wandb记录训练")
     parser.add_argument("--wandb_project", type=str, default="vq-vae-microdoppler", help="wandb项目名")

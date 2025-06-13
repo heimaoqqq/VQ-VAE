@@ -20,15 +20,15 @@ def test_training():
     parser.add_argument("--data_dir", type=str, default="dataset", help="数据集目录路径")
     parser.add_argument("--batch_size", type=int, default=8, help="批次大小")
     parser.add_argument("--image_size", type=int, default=256, help="图像尺寸")
-    parser.add_argument("--n_layers", type=int, default=2, help="下采样层数")
+    parser.add_argument("--n_layers", type=int, default=3, help="下采样层数")
     parser.add_argument("--latent_channels", type=int, default=4, help="潜在通道数")
     parser.add_argument("--vq_embed_dim", type=int, default=4, help="VQ嵌入维度")
     parser.add_argument("--vq_num_embed", type=int, default=128, help="码本大小")
     parser.add_argument("--use_perceptual", action="store_true", help="使用感知损失")
     parser.add_argument("--lambda_perceptual", type=float, default=0.1, help="感知损失权重")
     
-    # 解析参数
-    args = parser.parse_args(["--use_perceptual"])
+    # 解析参数，使用命令行传入的参数而非硬编码的参数
+    args = parser.parse_args()
     args.device = "cuda" if torch.cuda.is_available() else "cpu"
     
     print(f"使用设备: {args.device}")
