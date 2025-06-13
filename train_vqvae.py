@@ -14,22 +14,23 @@ def parse_args():
     parser = argparse.ArgumentParser(description="训练VQ-VAE模型")
     parser.add_argument("--data_dir", type=str, default="dataset", help="数据集目录")
     parser.add_argument("--output_dir", type=str, default="vqvae_model", help="模型保存目录")
-    parser.add_argument("--batch_size", type=int, default=8, help="批次大小")
+    parser.add_argument("--batch_size", type=int, default=32, help="批次大小")
     parser.add_argument("--image_size", type=int, default=256, help="图像尺寸")
     parser.add_argument("--epochs", type=int, default=100, help="训练轮数")
-    parser.add_argument("--lr", type=float, default=5e-5, help="学习率")
+    parser.add_argument("--lr", type=float, default=1e-4, help="学习率")
     parser.add_argument("--num_train_steps", type=int, default=None, help="训练步数")
     parser.add_argument("--save_steps", type=int, default=500, help="保存间隔步数")
     parser.add_argument("--logging_steps", type=int, default=100, help="日志间隔步数")
-    parser.add_argument("--latent_channels", type=int, default=3, help="潜变量通道数")
-    parser.add_argument("--vq_embed_dim", type=int, default=64, help="VQ嵌入维度")
-    parser.add_argument("--vq_num_embed", type=int, default=128, help="VQ嵌入数量")
-    parser.add_argument("--n_layers", type=int, default=3, help="下采样层数")
+    parser.add_argument("--latent_channels", type=int, default=4, help="潜变量通道数")
+    parser.add_argument("--vq_embed_dim", type=int, default=128, help="VQ嵌入维度")
+    parser.add_argument("--vq_num_embed", type=int, default=256, help="VQ嵌入数量")
+    parser.add_argument("--n_layers", type=int, default=4, help="下采样层数")
     parser.add_argument("--save_images", action="store_true", help="是否保存重建图像")
     parser.add_argument("--use_wandb", action="store_true", help="是否使用wandb记录训练")
     parser.add_argument("--wandb_project", type=str, default="vq-vae-microdoppler", help="wandb项目名")
     parser.add_argument("--wandb_name", type=str, default="vqvae-training", help="wandb运行名")
     parser.add_argument("--debug", action="store_true", help="调试模式")
+    parser.add_argument("--fp16", action="store_true", help="是否使用半精度训练")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="训练设备")
     return parser.parse_args()
 
@@ -44,7 +45,7 @@ def create_vq_model(args):
     
     # 构建通道配置，从128开始，每层翻倍，最多到512
     block_out_channels = []
-    current_channels = 64
+    current_channels = 128
     for i in range(n_layers):
         current_channels = min(current_channels * 2, 512)
         block_out_channels.append(current_channels)
@@ -141,6 +142,43 @@ class VQModelTrainer:
             
         return result, decoder_output.sample
     
+    def train_step_fp16(self, batch, scaler):
+        """混合精度训练步骤"""
+        self.optimizer.zero_grad()
+        
+        # 使用自动混合精度
+        with torch.cuda.amp.autocast():
+            # 前向传播
+            encoder_output = self.model.encode(batch)
+            decoder_output = self.model.decode(encoder_output.latents)
+            
+            # 计算重建损失
+            reconstruction_loss = F.mse_loss(decoder_output.sample, batch)
+            
+            # 计算VQ损失
+            vq_loss = self.compute_vq_loss(encoder_output, decoder_output)
+            
+            # 总损失
+            loss = reconstruction_loss + vq_loss
+        
+        # 反向传播与优化器步骤
+        scaler.scale(loss).backward()
+        scaler.step(self.optimizer)
+        scaler.update()
+        
+        # 返回结果
+        result = {
+            'loss': loss.item(),
+            'recon_loss': reconstruction_loss.item(),
+            'vq_loss': vq_loss.item(),
+        }
+        
+        perplexity = self.get_perplexity(encoder_output)
+        if perplexity is not None:
+            result['perplexity'] = perplexity
+            
+        return result, decoder_output.sample
+    
     @torch.no_grad()
     def eval_step(self, batch):
         """评估步骤"""
@@ -202,6 +240,14 @@ def train_vqvae(args):
     # 创建训练器
     trainer = VQModelTrainer(model, optimizer, args.device)
     
+    # 使用混合精度训练（用于16G显存）
+    if args.fp16 and args.device != "cpu":
+        from torch.cuda.amp import GradScaler, autocast
+        scaler = GradScaler()
+        print("使用混合精度训练 (FP16)")
+    else:
+        scaler = None
+    
     # 调试模式
     if args.debug:
         print("调试模式: 检查模型输出...")
@@ -230,7 +276,13 @@ def train_vqvae(args):
             images = batch.to(args.device)
             
             # 训练步骤
-            results, reconstructed = trainer.train_step(images)
+            if scaler is not None:
+                # 使用混合精度训练
+                with autocast():
+                    results, reconstructed = trainer.train_step_fp16(images, scaler)
+            else:
+                # 常规训练
+                results, reconstructed = trainer.train_step(images)
             
             # 获取损失
             epoch_loss += results['loss']

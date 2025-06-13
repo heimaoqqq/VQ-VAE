@@ -21,22 +21,22 @@ def parse_args():
     parser.add_argument("--data_dir", type=str, default="dataset", help="数据集目录")
     parser.add_argument("--vqvae_model_path", type=str, default="vqvae_model", help="VQ-VAE模型路径")
     parser.add_argument("--output_dir", type=str, default="ldm_model", help="模型保存目录")
-    parser.add_argument("--batch_size", type=int, default=8, help="批次大小")
+    parser.add_argument("--batch_size", type=int, default=32, help="批次大小")
     parser.add_argument("--image_size", type=int, default=256, help="图像尺寸")
     parser.add_argument("--epochs", type=int, default=100, help="训练轮数")
-    parser.add_argument("--lr", type=float, default=1e-5, help="学习率")
+    parser.add_argument("--lr", type=float, default=1e-4, help="学习率")
     parser.add_argument("--num_train_steps", type=int, default=None, help="训练步数")
     parser.add_argument("--save_steps", type=int, default=500, help="保存间隔步数")
     parser.add_argument("--eval_steps", type=int, default=1000, help="评估间隔步数")
     parser.add_argument("--logging_steps", type=int, default=100, help="日志间隔步数")
-    parser.add_argument("--latent_channels", type=int, default=3, help="潜变量通道数")
+    parser.add_argument("--latent_channels", type=int, default=4, help="潜变量通道数")
     parser.add_argument("--save_images", action="store_true", help="是否保存生成图像")
     parser.add_argument("--num_inference_steps", type=int, default=50, help="推理步数")
     parser.add_argument("--use_wandb", action="store_true", help="是否使用wandb记录训练")
     parser.add_argument("--wandb_project", type=str, default="ldm-microdoppler", help="wandb项目名")
     parser.add_argument("--wandb_name", type=str, default="ldm-training", help="wandb运行名")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="训练设备")
-    parser.add_argument("--mixed_precision", type=str, default="no", choices=["no", "fp16", "bf16"], help="混合精度训练")
+    parser.add_argument("--mixed_precision", type=str, default="fp16", choices=["no", "fp16", "bf16"], help="混合精度训练")
     return parser.parse_args()
 
 def create_unet_model(args, vq_model):
@@ -47,11 +47,11 @@ def create_unet_model(args, vq_model):
     
     # 根据潜在空间大小调整UNet参数
     if latent_size >= 32:  # 较大的潜在空间
-        block_out_channels = (128, 256, 512, 512)
+        block_out_channels = (256, 512, 768, 1024)
         layers_per_block = 2
     else:  # 较小的潜在空间
-        block_out_channels = (128, 256, 512) 
-        layers_per_block = 2
+        block_out_channels = (256, 512, 768) 
+        layers_per_block = 3
     
     model = UNet2DModel(
         sample_size=latent_size,  # 潜在空间分辨率
@@ -114,6 +114,7 @@ def train_ldm(args):
     accelerator = Accelerator(
         mixed_precision=args.mixed_precision,
         log_with="wandb" if args.use_wandb else None,
+        gradient_accumulation_steps=1,
     )
     
     if args.use_wandb:
@@ -140,13 +141,14 @@ def train_ldm(args):
     print(f"图像大小: {args.image_size}x{args.image_size}")
     print(f"VQ-VAE下采样层数: {len(vq_model.config.down_block_types)}")
     print(f"潜在空间大小: {latent_size}x{latent_size}")
+    print(f"使用混合精度: {args.mixed_precision}")
     
     # 优化器
     optimizer = AdamW(
         model.parameters(), 
         lr=args.lr,
         betas=(0.9, 0.999),
-        weight_decay=1e-6
+        weight_decay=1e-5 
     )
     
     # 使用accelerator准备模型和数据加载器
