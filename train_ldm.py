@@ -4,13 +4,26 @@ import torch
 import torch.nn.functional as F
 from torch.optim import AdamW
 from tqdm import tqdm
-import wandb
-from diffusers import (
-    UNet2DModel,
-    DDPMScheduler,
-    DDPMPipeline,
-    VQModel
-)
+import sys
+
+# 添加版本兼容性检查
+try:
+    import wandb
+    from diffusers import (
+        UNet2DModel,
+        DDPMScheduler,
+        DDPMPipeline,
+        VQModel
+    )
+except ImportError as e:
+    if "cannot import name 'cached_download' from 'huggingface_hub'" in str(e):
+        print("检测到huggingface_hub版本不兼容。尝试安装兼容版本...")
+        os.system("pip install huggingface_hub==0.16.4 diffusers==0.26.3 --force-reinstall")
+        print("请重新运行脚本")
+        sys.exit(1)
+    else:
+        raise e
+
 from dataset import get_dataloaders
 from accelerate import Accelerator
 import matplotlib.pyplot as plt
@@ -35,6 +48,7 @@ def parse_args():
     parser.add_argument("--use_wandb", action="store_true", help="是否使用wandb记录训练")
     parser.add_argument("--wandb_project", type=str, default="ldm-microdoppler", help="wandb项目名")
     parser.add_argument("--wandb_name", type=str, default="ldm-training", help="wandb运行名")
+    parser.add_argument("--kaggle", action="store_true", help="是否在Kaggle环境中运行")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="训练设备")
     parser.add_argument("--mixed_precision", type=str, default="fp16", choices=["no", "fp16", "bf16"], help="混合精度训练")
     return parser.parse_args()

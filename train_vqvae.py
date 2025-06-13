@@ -4,7 +4,20 @@ import torch
 import torch.nn.functional as F
 from torch.optim import AdamW
 from tqdm import tqdm
-from diffusers import VQModel, DDIMScheduler
+import sys
+
+# 添加版本兼容性检查
+try:
+    from diffusers import VQModel, DDIMScheduler
+except ImportError as e:
+    if "cannot import name 'cached_download' from 'huggingface_hub'" in str(e):
+        print("检测到huggingface_hub版本不兼容。尝试安装兼容版本...")
+        os.system("pip install huggingface_hub==0.16.4 diffusers==0.26.3 --force-reinstall")
+        print("请重新运行脚本")
+        sys.exit(1)
+    else:
+        raise e
+
 import wandb
 import matplotlib.pyplot as plt
 from torchvision.utils import make_grid, save_image
@@ -31,6 +44,7 @@ def parse_args():
     parser.add_argument("--wandb_name", type=str, default="vqvae-training", help="wandb运行名")
     parser.add_argument("--debug", action="store_true", help="调试模式")
     parser.add_argument("--fp16", action="store_true", help="是否使用半精度训练")
+    parser.add_argument("--kaggle", action="store_true", help="是否在Kaggle环境中运行")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="训练设备")
     return parser.parse_args()
 
