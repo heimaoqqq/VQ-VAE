@@ -1,0 +1,33 @@
+# 忽略数据集
+dataset/
+dataset/*
+
+# 忽略模型保存和生成图像
+vqvae_model/
+vqvae_debug/
+ldm_model/
+generated_images/
+
+# Python缓存文件
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 虚拟环境
+env/
+venv/
+ENV/
+
+# 分布式训练和日志
+wandb/
+logs/
+*.log
+
+# IDE文件
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 其他
+.DS_Store 
