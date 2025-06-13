@@ -13,9 +13,9 @@ def test_model():
     
     # 创建参数对象
     args = argparse.Namespace(
-        batch_size=4
+        batch_size=2
         image_size=256,
-        n_layers=2,
+        n_layers=3,
         latent_channels=4,
         vq_embed_dim=4,  # 与latent_channels一致
         vq_num_embed=128,
