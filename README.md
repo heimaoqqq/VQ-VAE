@@ -52,7 +52,9 @@ python train_vqvae.py \
   --image_size 256 \
   --epochs 100 \
   --lr 1e-4 \
-  --use_perceptual
+  --use_perceptual \
+  --save_images \
+  --logging_steps 100
 ```
 
 主要参数说明：
@@ -66,6 +68,9 @@ python train_vqvae.py \
 - `--vq_embed_dim`: VQ嵌入维度（默认为4）
 - `--vq_num_embed`: VQ嵌入数量（默认为128）
 - `--n_layers`: 下采样层数（默认为3，生成32x32潜在空间）
+- `--save_epochs`: 每多少轮保存一次模型（默认为5）
+- `--save_images`: 是否保存重建图像对比图
+- `--logging_steps`: 每多少步保存一次重建图像（默认为100）
 - `--use_wandb`: 是否使用wandb记录训练过程
 - `--use_perceptual`: 是否使用感知损失
 - `--lambda_perceptual`: 感知损失权重（默认为0.1）
@@ -81,15 +86,20 @@ python train_ldm.py \
   --batch_size 16 \
   --image_size 256 \
   --epochs 100 \
-  --lr 1e-4
+  --lr 1e-4 \
+  --save_images \
+  --eval_steps 1000
 ```
 
 主要参数说明：
 - `--vqvae_model_path`: 预训练的VQ-VAE模型路径
 - `--latent_channels`: 潜变量通道数（默认为4）
-- `--mixed_precision`: 混合精度训练，可选["no", "fp16", "bf16"]
-- `--save_epochs`: 每多少个epoch保存一次模型
+- `--save_epochs`: 每多少轮保存一次模型（默认为5）
 - `--save_images`: 是否保存生成图像
+- `--eval_steps`: 每多少步评估并生成样本图像（默认为1000）
+- `--logging_steps`: 日志记录间隔步数（默认为100）
+- `--mixed_precision`: 混合精度训练，可选["no", "fp16", "bf16"]
+- `--num_inference_steps`: 推理步数（默认为50）
 
 ## 生成新图像
 
@@ -197,7 +207,12 @@ python train_vqvae.py \
   --epochs 100 \
   --lr 1e-4 \
   --use_perceptual \
-  --fp16
+  --fp16 \
+  --save_images \
+  --logging_steps 383  # 每1轮保存一次重建图像（假设每轮383批次）
+
+# 如果想每10轮保存一次重建图像：
+# --logging_steps 3830  # 383批次/轮 × 10轮
 
 # 训练LDM
 !python train_ldm.py \
@@ -208,7 +223,9 @@ python train_vqvae.py \
   --image_size 256 \
   --epochs 100 \
   --lr 1e-4 \
-  --mixed_precision fp16
+  --mixed_precision fp16 \
+  --save_images \
+  --eval_steps 1000  # 每1000步生成一次样本图像
 ```
 
 ## 模型配置说明
@@ -234,4 +251,7 @@ python train_vqvae.py \
    - 每5轮保存一次模型（可通过--save_epochs调整）
    - 保存验证损失最佳的模型
    - 验证损失连续3轮无改善自动早停
-   - 自动删除旧模型，只保留最新和最佳模型 
+   - 自动删除旧模型，只保留最新和最佳模型
+6. 重建图像保存路径：
+   - VQ-VAE重建图像：保存在{output_dir}/images/目录下
+   - LDM生成图像：保存在{output_dir}/generated_images/目录下 
