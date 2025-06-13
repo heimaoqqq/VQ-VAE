@@ -35,27 +35,65 @@ def generate_images(args):
         torch.manual_seed(args.seed)
         np.random.seed(args.seed)
     
-    # 加载模型
-    vq_model = VQModel.from_pretrained(args.vqvae_path).to(args.device)
-    scheduler = DDPMScheduler.from_pretrained(args.ldm_path)
+    print(f"正在加载VQ-VAE模型: {args.vqvae_path}")
+    # 加载VQ-VAE模型
+    try:
+        vq_model = VQModel.from_pretrained(args.vqvae_path).to(args.device)
+        vq_model.eval()
+    except Exception as e:
+        raise ValueError(f"无法加载VQ-VAE模型: {e}")
     
+    # 尝试加载Pipeline或者单独的UNet模型
+    print(f"正在加载LDM模型: {args.ldm_path}")
     try:
         # 尝试直接加载Pipeline
         pipe = DDPMPipeline.from_pretrained(args.ldm_path).to(args.device)
+        print("成功加载DDPMPipeline")
     except Exception as e:
         print(f"无法直接加载Pipeline: {e}")
         print("尝试加载单独的UNet模型...")
         
         from diffusers import UNet2DModel
-        unet_path = os.path.join(args.ldm_path, "unet")
-        if os.path.exists(unet_path):
-            unet = UNet2DModel.from_pretrained(unet_path).to(args.device)
-            pipe = DDPMPipeline(unet=unet, scheduler=scheduler)
-        else:
-            raise ValueError(f"无法在{args.ldm_path}中找到UNet模型")
+        
+        # 首先尝试加载调度器
+        try:
+            scheduler = DDPMScheduler.from_pretrained(args.ldm_path)
+        except Exception:
+            print("无法加载调度器，使用默认配置")
+            scheduler = DDPMScheduler(num_train_timesteps=1000)
+        
+        # 尝试不同的路径加载UNet
+        possible_unet_paths = [
+            os.path.join(args.ldm_path, "unet"),
+            args.ldm_path,
+            os.path.join(args.ldm_path, "best-pipeline", "unet"),
+            os.path.join(args.ldm_path, "best-checkpoint", "unet")
+        ]
+        
+        unet = None
+        for path in possible_unet_paths:
+            if os.path.exists(path):
+                try:
+                    unet = UNet2DModel.from_pretrained(path).to(args.device)
+                    print(f"成功从 {path} 加载UNet模型")
+                    break
+                except Exception:
+                    continue
+        
+        if unet is None:
+            raise ValueError(f"无法在{args.ldm_path}中找到有效的UNet模型")
+        
+        # 构建Pipeline
+        pipe = DDPMPipeline(unet=unet, scheduler=scheduler)
     
     # 计算潜在空间分辨率
     latent_size = args.image_size // (2 ** len(vq_model.config.down_block_types))
+    print(f"图像尺寸: {args.image_size}x{args.image_size}")
+    print(f"潜在空间尺寸: {latent_size}x{latent_size}")
+    print(f"使用设备: {args.device}")
+    print(f"批次大小: {args.batch_size}")
+    print(f"生成样本数: {args.num_samples}")
+    print(f"推理步数: {args.num_inference_steps}")
     
     # 生成样本
     all_images = []
@@ -89,10 +127,11 @@ def generate_images(args):
             all_images.append(image)
     
     # 生成网格图像
-    if args.grid:
-        grid = make_grid(all_images, nrow=int(np.sqrt(args.num_samples)))
-        save_image(grid, os.path.join(args.output_dir, f"grid_{args.num_samples}_images.png"))
-        print(f"生成的网格图像已保存到: {os.path.join(args.output_dir, f'grid_{args.num_samples}_images.png')}")
+    if args.grid and all_images:
+        grid = make_grid(all_images, nrow=int(np.sqrt(len(all_images))))
+        grid_path = os.path.join(args.output_dir, f"grid_{args.num_samples}_images.png")
+        save_image(grid, grid_path)
+        print(f"生成的网格图像已保存到: {grid_path}")
     
     print(f"已成功生成 {min(args.num_samples, len(all_images))} 张图像")
 
@@ -101,16 +140,44 @@ def create_custom_pipeline(args):
     from diffusers import DiffusionPipeline, UNet2DModel
     
     # 加载模型
-    vq_model = VQModel.from_pretrained(args.vqvae_path)
+    try:
+        vq_model = VQModel.from_pretrained(args.vqvae_path)
+        print(f"成功加载VQ-VAE模型: {args.vqvae_path}")
+    except Exception as e:
+        raise ValueError(f"无法加载VQ-VAE模型: {e}")
     
     # 检查LDM是否已经是完整的Pipeline
     try:
-        unet = UNet2DModel.from_pretrained(os.path.join(args.ldm_path, "unet"))
-        scheduler = DDPMScheduler.from_pretrained(args.ldm_path)
-    except:
-        # 如果不是，则尝试加载独立的UNet模型
-        unet = UNet2DModel.from_pretrained(args.ldm_path)
-        scheduler = DDPMScheduler(num_train_timesteps=1000)
+        # 首先尝试加载UNet
+        possible_unet_paths = [
+            os.path.join(args.ldm_path, "unet"),
+            os.path.join(args.ldm_path, "best-pipeline", "unet"),
+            os.path.join(args.ldm_path, "best-checkpoint", "unet"),
+            args.ldm_path
+        ]
+        
+        unet = None
+        for path in possible_unet_paths:
+            if os.path.exists(path):
+                try:
+                    unet = UNet2DModel.from_pretrained(path)
+                    print(f"成功从 {path} 加载UNet模型")
+                    break
+                except Exception:
+                    continue
+        
+        if unet is None:
+            raise ValueError(f"无法在{args.ldm_path}中找到有效的UNet模型")
+        
+        # 尝试加载调度器
+        try:
+            scheduler = DDPMScheduler.from_pretrained(args.ldm_path)
+        except Exception:
+            print("无法加载特定的调度器，使用默认配置")
+            scheduler = DDPMScheduler(num_train_timesteps=1000)
+    except Exception as e:
+        print(f"加载模型组件时出错: {e}")
+        return None
     
     # 创建自定义Pipeline
     class VQDiffusionPipeline(DiffusionPipeline):

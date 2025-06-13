@@ -12,7 +12,6 @@ class MicroDopplerDataset(Dataset):
         
         参数:
             data_dir (str): 数据集根目录
-            transform: 数据增强转换
             image_size (int): 图像尺寸
         """
         self.data_dir = data_dir

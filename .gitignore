@@ -1,33 +1,95 @@
 # 忽略数据集
 dataset/
 dataset/*
+*.jpg
+*.png
+*.jpeg
+*.bmp
+*.gif
+*.tif
+*.tiff
 
 # 忽略模型保存和生成图像
 vqvae_model/
 vqvae_debug/
 ldm_model/
 generated_images/
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.safetensors
+*.onnx
 
 # Python缓存文件
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
 # 虚拟环境
 env/
 venv/
 ENV/
+.env
+.venv
+env.bak/
+venv.bak/
+conda-env/
 
 # 分布式训练和日志
 wandb/
 logs/
 *.log
+lightning_logs/
+tb_logs/
+runs/
 
 # IDE文件
 .idea/
 .vscode/
 *.swp
 *.swo
+*.sublime-project
+*.sublime-workspace
+.spyderproject
+.spyproject
+.ropeproject
+.project
+.pydevproject
+.settings/
+.classpath
 
-# 其他
-.DS_Store 
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+*.bak
+*.tmp
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+.jupyter/
+
+# 其他临时文件
+temp/
+tmp/
+.cache/ 
