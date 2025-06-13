@@ -27,8 +27,8 @@ def test_training():
     parser.add_argument("--use_perceptual", action="store_true", help="使用感知损失")
     parser.add_argument("--lambda_perceptual", type=float, default=0.1, help="感知损失权重")
     
-    # 解析参数
-    args = parser.parse_args(["--use_perceptual"])
+    # 解析参数，使用命令行传入的参数而非硬编码的参数
+    args = parser.parse_args()
     args.device = "cuda" if torch.cuda.is_available() else "cpu"
     
     print(f"使用设备: {args.device}")
