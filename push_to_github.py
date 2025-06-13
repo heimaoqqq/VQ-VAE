@@ -18,7 +18,7 @@ def push_to_github():
         return False
     
     # 提交更改
-    commit_message = "减小模型大小以加快训练，保持3层下采样和32x32潜在空间:\n- 降低起始通道数从64->32\n- 降低最大通道数从512->256\n- 减少潜变量通道数从4->2\n- 减少码本大小从256->64\n- LDM模型也相应减小"
+    commit_message = "增强模型表示能力:\n- 增加码本大小从64->128\n- 增加潜在通道数从2->4\n- 更新README.md中的相关说明\n- 适应微多普勒时频图的复杂特征"
     if not run_command(f'git commit -m "{commit_message}"'):
         print("提交更改失败")
         return False

@@ -44,7 +44,7 @@ def parse_args():
     parser.add_argument("--save_epochs", type=int, default=5, help="每多少个epoch保存一次模型")
     parser.add_argument("--eval_steps", type=int, default=1000, help="评估间隔步数")
     parser.add_argument("--logging_steps", type=int, default=100, help="日志间隔步数")
-    parser.add_argument("--latent_channels", type=int, default=2, help="潜变量通道数")
+    parser.add_argument("--latent_channels", type=int, default=4, help="潜变量通道数")
     parser.add_argument("--save_images", action="store_true", help="是否保存生成图像")
     parser.add_argument("--num_inference_steps", type=int, default=50, help="推理步数")
     parser.add_argument("--use_wandb", action="store_true", help="是否使用wandb记录训练")
