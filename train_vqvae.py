@@ -1,101 +1,30 @@
+"""
+VQ-VAE 训练脚本
+
+使用向量量化自编码器（VQ-VAE）训练微多普勒时频图的生成模型
+"""
+
 import os
 import argparse
 import torch
-import torch.nn.functional as F
+import shutil
 from torch.optim import AdamW
 from tqdm import tqdm
-import sys
-import shutil
 
-# 添加版本兼容性检查
-try:
-    from diffusers import VQModel, DDIMScheduler
-except ImportError as e:
-    if "cannot import name 'cached_download' from 'huggingface_hub'" in str(e):
-        print("检测到huggingface_hub版本不兼容。尝试安装兼容版本...")
-        os.system("pip install huggingface_hub>=0.20.2")
-        os.system("pip install diffusers>=0.26.3 --no-deps")
-        print("请重新运行脚本")
-        sys.exit(1)
-    else:
-        raise e
-
-import wandb
-import matplotlib.pyplot as plt
-from torchvision.utils import make_grid, save_image
+# 导入数据集
 from dataset import get_dataloaders
 
-# 添加感知损失相关导入
-import torchvision.models as models
+# 导入自定义模块
+from vqvae.models import create_vq_model, PerceptualLoss
+from vqvae.trainers import VQModelTrainer
+from vqvae.utils import save_reconstructed_images, validate
 
-class PerceptualLoss(torch.nn.Module):
-    """基于VGG的感知损失"""
-    def __init__(self, device, resize=True):
-        super(PerceptualLoss, self).__init__()
-        # 加载预训练的VGG16模型
-        try:
-            # 新版API
-            from torchvision.models import VGG16_Weights
-            vgg = models.vgg16(weights=VGG16_Weights.IMAGENET1K_V1).features.to(device)
-        except ImportError:
-            # 旧版API兼容
-            vgg = models.vgg16(pretrained=True).features.to(device)
-            
-        vgg.eval()
-        # 冻结VGG参数
-        for param in vgg.parameters():
-            param.requires_grad = False
-            
-        # 选择需要提取特征的层
-        self.slice1 = torch.nn.Sequential()
-        self.slice2 = torch.nn.Sequential()
-        self.slice3 = torch.nn.Sequential()
-        self.slice4 = torch.nn.Sequential()
-        
-        # VGG的不同层分组
-        for x in range(4):
-            self.slice1.add_module(str(x), vgg[x])
-        for x in range(4, 9):
-            self.slice2.add_module(str(x), vgg[x])
-        for x in range(9, 16):
-            self.slice3.add_module(str(x), vgg[x])
-        for x in range(16, 23):
-            self.slice4.add_module(str(x), vgg[x])
-            
-        self.device = device
-        self.resize = resize
-        self.normalize = torch.nn.functional.normalize
-        
-    def forward(self, x, y):
-        # 确保输入是正确的范围[0,1]
-        if x.min() < 0 or y.min() < 0:
-            x = (x + 1) / 2  # 从[-1,1]转换到[0,1]
-            y = (y + 1) / 2
-        
-        # 从[0,1]转换到归一化的VGG输入
-        mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1).to(self.device)
-        std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1).to(self.device)
-        x = (x - mean) / std
-        y = (y - mean) / std
-        
-        # 提取特征
-        h_x1 = self.slice1(x)
-        h_x2 = self.slice2(h_x1)
-        h_x3 = self.slice3(h_x2)
-        h_x4 = self.slice4(h_x3)
-        
-        h_y1 = self.slice1(y)
-        h_y2 = self.slice2(h_y1)
-        h_y3 = self.slice3(h_y2)
-        h_y4 = self.slice4(h_y3)
-        
-        # 计算各层特征的损失
-        loss = F.mse_loss(h_x1, h_y1) + \
-               F.mse_loss(h_x2, h_y2) + \
-               F.mse_loss(h_x3, h_y3) + \
-               F.mse_loss(h_x4, h_y4)
-               
-        return loss
+# 导入其他库
+try:
+    import wandb
+except ImportError:
+    print("未找到wandb库，将不使用wandb进行可视化")
+    wandb = None
 
 def parse_args():
     parser = argparse.ArgumentParser(description="训练VQ-VAE模型")
@@ -125,254 +54,6 @@ def parse_args():
     parser.add_argument("--lambda_perceptual", type=float, default=0.1, help="感知损失权重")
     return parser.parse_args()
 
-def create_vq_model(args):
-    """创建VQModel实例"""
-    # 根据参数设置层数和通道数
-    n_layers = args.n_layers
-    
-    # 动态构建层配置
-    down_block_types = ["DownEncoderBlock2D"] * n_layers
-    up_block_types = ["UpDecoderBlock2D"] * n_layers
-    
-    # 构建通道配置，从128开始，每层翻倍，最多到512
-    block_out_channels = []
-    current_channels = 128
-    for i in range(n_layers):
-        current_channels = min(current_channels * 2, 512)
-        block_out_channels.append(current_channels)
-    
-    model = VQModel(
-        in_channels=3,  # RGB图像
-        out_channels=3,
-        down_block_types=tuple(down_block_types),
-        up_block_types=tuple(up_block_types),
-        block_out_channels=tuple(block_out_channels),
-        latent_channels=args.latent_channels,
-        num_vq_embeddings=args.vq_num_embed,
-        vq_embed_dim=args.vq_embed_dim,
-    )
-    return model
-
-def save_reconstructed_images(original, reconstructed, epoch, step, output_dir):
-    """保存原始图像和重建图像对比"""
-    # 将张量转换为[0,1]范围的图像
-    original = (original + 1) / 2
-    reconstructed = (reconstructed + 1) / 2
-    
-    # 创建网格图像
-    batch_size = original.size(0)
-    comparison = torch.cat([original, reconstructed], dim=0)
-    save_path = os.path.join(output_dir, f"recon_epoch{epoch}_step{step}.png")
-    
-    # 保存图像
-    grid = make_grid(comparison, nrow=batch_size)
-    save_image(grid, save_path)
-    
-    return save_path
-
-class VQModelTrainer:
-    def __init__(self, model, optimizer, device, use_perceptual=False, lambda_perceptual=0.1):
-        self.model = model
-        self.optimizer = optimizer
-        self.device = device
-        self.use_perceptual = use_perceptual
-        self.lambda_perceptual = lambda_perceptual
-        
-        # 初始化感知损失模型
-        if use_perceptual:
-            self.perceptual_loss = PerceptualLoss(device)
-            print(f"启用感知损失，权重为 {self.lambda_perceptual}")
-        else:
-            self.perceptual_loss = None
-    
-    def compute_vq_loss(self, encoder_output, decoder_output):
-        """计算VQ损失，适应diffusers 0.33.1及以上版本API"""
-        # 检查encoder_output中是否有loss属性
-        if hasattr(encoder_output, "loss"):
-            return encoder_output.loss
-        
-        # 检查decoder_output中的commit_loss (diffusers 0.33.1新API)
-        if hasattr(decoder_output, "commit_loss") and decoder_output.commit_loss is not None:
-            return decoder_output.commit_loss
-        
-        # 如果encoder_output有z和z_q属性，手动计算
-        if hasattr(encoder_output, "z") and hasattr(encoder_output, "z_q"):
-            # 计算commitment loss
-            commitment_loss = F.mse_loss(encoder_output.z.detach(), encoder_output.z_q)
-            # 计算codebook loss
-            codebook_loss = F.mse_loss(encoder_output.z, encoder_output.z_q.detach())
-            return codebook_loss + 0.25 * commitment_loss
-        
-        # 没有可用的VQ损失计算方法，使用默认值
-        # 对于diffusers 0.33.1，我们可以使用一个适当的默认损失值或警告信息
-        print("警告: 无法计算VQ损失，使用默认值。请检查diffusers版本与模型兼容性。")
-        return torch.tensor(0.1, device=self.device)
-    
-    def get_perplexity(self, encoder_output):
-        """获取码本使用情况指标 (perplexity)"""
-        # 如果直接提供perplexity属性
-        if hasattr(encoder_output, "perplexity"):
-            return encoder_output.perplexity
-        
-        # 在diffusers 0.33.1版本中，尝试通过模型的quantize模块获取
-        try:
-            quantize = self.model.quantize
-            if hasattr(quantize, "embedding") and hasattr(self.model, "quantize"):
-                # 计算所有潜在向量的临近码本索引
-                with torch.no_grad():
-                    # 获取latents并确保是float32类型，防止half和float类型不匹配
-                    latents = encoder_output.latents.to(torch.float32)
-                    batch = latents.permute(0, 2, 3, 1).reshape(-1, quantize.vq_embed_dim)
-                    
-                    # 确保embedding权重也是float32类型
-                    embedding_weight = quantize.embedding.weight.to(torch.float32)
-                    
-                    # 计算与码本的距离 (确保都是float32类型)
-                    d = torch.sum(batch ** 2, dim=1, keepdim=True) + \
-                        torch.sum(embedding_weight ** 2, dim=1) - \
-                        2 * torch.matmul(batch, embedding_weight.t())
-                        
-                    # 获取最近的码本索引
-                    encoding_indices = torch.argmin(d, dim=1)
-                    
-                    # 计算唯一索引数(被使用的码本向量数量)
-                    unique_indices = torch.unique(encoding_indices)
-                    perplexity = len(unique_indices)
-                    
-                    return perplexity
-        except Exception as e:
-            print(f"计算码本利用率时出错: {e}")
-        
-        # 无法计算perplexity
-        return None
-    
-    def train_step(self, batch):
-        """训练步骤"""
-        self.optimizer.zero_grad()
-        
-        # 前向传播
-        encoder_output = self.model.encode(batch)
-        decoder_output = self.model.decode(encoder_output.latents)
-        
-        # 计算重建损失
-        reconstruction_loss = F.mse_loss(decoder_output.sample, batch)
-        
-        # 计算VQ损失
-        vq_loss = self.compute_vq_loss(encoder_output, decoder_output)
-        
-        # 初始化总损失
-        total_loss = reconstruction_loss + vq_loss
-        
-        # 如果启用了感知损失，添加到总损失中
-        perceptual_loss_val = 0.0
-        if self.use_perceptual and self.perceptual_loss is not None:
-            perceptual_loss_val = self.perceptual_loss(decoder_output.sample, batch)
-            total_loss = total_loss + self.lambda_perceptual * perceptual_loss_val
-        
-        # 反向传播
-        total_loss.backward()
-        self.optimizer.step()
-        
-        # 返回结果
-        result = {
-            'loss': total_loss.item(),
-            'recon_loss': reconstruction_loss.item(),
-            'vq_loss': vq_loss.item(),
-        }
-        
-        if self.use_perceptual:
-            result['perceptual_loss'] = perceptual_loss_val.item()
-        
-        perplexity = self.get_perplexity(encoder_output)
-        if perplexity is not None:
-            result['perplexity'] = perplexity
-            
-        return result, decoder_output.sample
-    
-    def train_step_fp16(self, batch, scaler):
-        """混合精度训练步骤"""
-        self.optimizer.zero_grad()
-        
-        # 使用自动混合精度
-        with torch.amp.autocast(device_type='cuda'):
-            # 前向传播
-            encoder_output = self.model.encode(batch)
-            decoder_output = self.model.decode(encoder_output.latents)
-            
-            # 计算重建损失
-            reconstruction_loss = F.mse_loss(decoder_output.sample, batch)
-            
-            # 计算VQ损失
-            vq_loss = self.compute_vq_loss(encoder_output, decoder_output)
-            
-            # 初始化总损失
-            total_loss = reconstruction_loss + vq_loss
-            
-            # 如果启用了感知损失，添加到总损失中
-            perceptual_loss_val = 0.0
-            if self.use_perceptual and self.perceptual_loss is not None:
-                perceptual_loss_val = self.perceptual_loss(decoder_output.sample, batch)
-                total_loss = total_loss + self.lambda_perceptual * perceptual_loss_val
-        
-        # 反向传播与优化器步骤
-        scaler.scale(total_loss).backward()
-        scaler.step(self.optimizer)
-        scaler.update()
-        
-        # 返回结果
-        result = {
-            'loss': total_loss.item(),
-            'recon_loss': reconstruction_loss.item(),
-            'vq_loss': vq_loss.item(),
-        }
-        
-        if self.use_perceptual:
-            result['perceptual_loss'] = perceptual_loss_val.item()
-        
-        perplexity = self.get_perplexity(encoder_output)
-        if perplexity is not None:
-            result['perplexity'] = perplexity
-            
-        return result, decoder_output.sample
-    
-    @torch.no_grad()
-    def eval_step(self, batch):
-        """评估步骤"""
-        # 前向传播
-        encoder_output = self.model.encode(batch)
-        decoder_output = self.model.decode(encoder_output.latents)
-        
-        # 计算重建损失
-        reconstruction_loss = F.mse_loss(decoder_output.sample, batch)
-        
-        # 计算VQ损失
-        vq_loss = self.compute_vq_loss(encoder_output, decoder_output)
-        
-        # 初始化总损失
-        total_loss = reconstruction_loss + vq_loss
-        
-        # 如果启用了感知损失，添加到总损失中
-        perceptual_loss_val = 0.0
-        if self.use_perceptual and self.perceptual_loss is not None:
-            perceptual_loss_val = self.perceptual_loss(decoder_output.sample, batch)
-            total_loss = total_loss + self.lambda_perceptual * perceptual_loss_val
-        
-        # 返回结果
-        result = {
-            'loss': total_loss.item(),
-            'recon_loss': reconstruction_loss.item(),
-            'vq_loss': vq_loss.item(),
-        }
-        
-        if self.use_perceptual:
-            result['perceptual_loss'] = perceptual_loss_val.item()
-        
-        perplexity = self.get_perplexity(encoder_output)
-        if perplexity is not None:
-            result['perplexity'] = perplexity
-            
-        return result, decoder_output.sample
-
 def train_vqvae(args):
     """训练VQ-VAE模型"""
     # 创建输出目录和可视化目录
@@ -381,7 +62,7 @@ def train_vqvae(args):
     os.makedirs(images_dir, exist_ok=True)
     
     # 初始化wandb
-    if args.use_wandb:
+    if args.use_wandb and wandb is not None:
         wandb.init(project=args.wandb_project, name=args.wandb_name)
         wandb.config.update(args)
 
@@ -499,7 +180,7 @@ def train_vqvae(args):
             progress_bar.update(1)
             
             # wandb记录
-            if args.use_wandb and global_step % args.logging_steps == 0:
+            if args.use_wandb and wandb is not None and global_step % args.logging_steps == 0:
                 log_dict = {
                     "train/loss": results['loss'],
                     "train/recon_loss": results['recon_loss'],
@@ -527,7 +208,7 @@ def train_vqvae(args):
                     images_dir
                 )
                 
-                if args.use_wandb:
+                if args.use_wandb and wandb is not None:
                     wandb.log({
                         "reconstruction": wandb.Image(img_path)
                     }, step=global_step)
@@ -569,7 +250,7 @@ def train_vqvae(args):
             trainer, 
             args.device, 
             global_step,
-            args.use_wandb,
+            args.use_wandb and wandb is not None,
             args.save_images,
             images_dir,
             epoch
@@ -578,7 +259,7 @@ def train_vqvae(args):
         val_recon_loss = val_results['recon_loss']
         print(f"Epoch {epoch+1} 验证结果: 总损失={val_results['loss']:.6f}, 重建损失={val_recon_loss:.6f}, VQ损失={val_results['vq_loss']:.6f}")
         
-        if args.use_wandb:
+        if args.use_wandb and wandb is not None:
             wandb.log({
                 "epoch": epoch + 1,
                 "val/epoch_loss": val_results['loss'],
@@ -605,7 +286,7 @@ def train_vqvae(args):
             model.save_pretrained(best_model_path)
             print(f"新的最佳模型已保存到 {best_model_path} (验证重建损失: {best_val_recon_loss:.6f})")
             
-            if args.use_wandb:
+            if args.use_wandb and wandb is not None:
                 wandb.log({
                     "best_val_recon_loss": best_val_recon_loss
                 }, step=global_step)
@@ -624,71 +305,8 @@ def train_vqvae(args):
     
     # 训练结束
     print(f"训练结束，最佳验证重建损失: {best_val_recon_loss:.6f}")
-    if args.use_wandb:
+    if args.use_wandb and wandb is not None:
         wandb.finish()
-
-@torch.no_grad()
-def validate(dataloader, trainer, device, global_step, use_wandb=False, save_images=False, images_dir=None, epoch=0):
-    """验证模型"""
-    trainer.model.eval()
-    val_loss = 0.0
-    val_recon_loss = 0.0
-    val_vq_loss = 0.0
-    val_perceptual_loss = 0.0
-    val_perplexity = 0.0
-    perplexity_count = 0
-    all_results = []
-    
-    # 只显示一个进度条
-    val_bar = tqdm(dataloader, desc="验证中", leave=False)
-    
-    for batch in val_bar:
-        images = batch.to(device)
-        results, reconstructed = trainer.eval_step(images)
-        
-        # 累加损失
-        val_loss += results['loss']
-        val_recon_loss += results['recon_loss']
-        val_vq_loss += results['vq_loss']
-        
-        if 'perceptual_loss' in results:
-            val_perceptual_loss += results['perceptual_loss']
-        
-        if 'perplexity' in results:
-            val_perplexity += results['perplexity']
-            perplexity_count += 1
-        
-        all_results.append(results)
-        
-        # 更新进度条
-        val_bar.set_postfix({
-            "loss": f"{results['loss']:.4f}",
-            "recon": f"{results['recon_loss']:.4f}"
-        })
-    
-    # 计算平均损失
-    num_batches = len(dataloader)
-    avg_loss = val_loss / num_batches
-    avg_recon_loss = val_recon_loss / num_batches
-    avg_vq_loss = val_vq_loss / num_batches
-    
-    # 计算平均感知损失（如果使用了感知损失）
-    results = {
-        'loss': avg_loss,
-        'recon_loss': avg_recon_loss,
-        'vq_loss': avg_vq_loss,
-    }
-    
-    if perplexity_count > 0:
-        avg_perplexity = val_perplexity / perplexity_count
-        results['perplexity'] = avg_perplexity
-    
-    if val_perceptual_loss > 0:
-        avg_perceptual_loss = val_perceptual_loss / num_batches
-        results['perceptual_loss'] = avg_perceptual_loss
-    
-    # 返回结果
-    return results
 
 if __name__ == "__main__":
     args = parse_args()
