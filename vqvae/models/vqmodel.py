@@ -25,18 +25,15 @@ def create_vq_model(args):
     latent_channels = args.latent_channels
     vq_embed_dim = latent_channels  # 确保一致
     
-    # 注意：diffusers库中VQModel的实际下采样倍数与n_layers不完全对应
-    # 实验发现，设置n_layers=2时，实际下采样倍数是2x
-    # 这可能是因为库内部实现的差异
-    actual_downscale = 2  # 实际测得是固定2倍下采样，与n_layers无关
+    # 在diffusers中的VQModel，每层下采样2倍，总下采样倍数是2^n_layers
+    actual_downscale = 2 ** n_layers
     
     print(f"模型配置:")
     print(f"- 下采样层数: {n_layers}")
     print(f"- 通道配置: {block_out_channels}")
     print(f"- 潜在通道数/嵌入维度: {latent_channels}")
     print(f"- 码本大小: {args.vq_num_embed}")
-    print(f"- 理论下采样倍数: {2**n_layers}x")
-    print(f"- 实际下采样倍数: {actual_downscale}x")
+    print(f"- 下采样倍数: {actual_downscale}x")
     print(f"- 预期潜在空间尺寸: {args.image_size//actual_downscale}x{args.image_size//actual_downscale}")
     
     model = VQModel(

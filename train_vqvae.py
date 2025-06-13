@@ -87,7 +87,7 @@ def train_vqvae(args):
     # 打印模型结构
     print(f"模型下采样层数: {args.n_layers}")
     print(f"码本大小: {args.vq_num_embed}")
-    print(f"潜在空间大小: {args.image_size // (2 ** args.n_layers)}")
+    print(f"潜在空间尺寸: {args.image_size // (2 ** args.n_layers)}x{args.image_size // (2 ** args.n_layers)}")
     
     # 优化器
     optimizer = AdamW(model.parameters(), lr=args.lr)
