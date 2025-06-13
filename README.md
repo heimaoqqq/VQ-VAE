@@ -20,7 +20,6 @@
 ├── train_vqvae.py              # VQ-VAE模型训练脚本
 ├── train_ldm.py                # LDM扩散模型训练脚本  
 ├── generate.py                 # 图像生成脚本
-├── check_vqmodel_api.py        # VQModel API检查工具
 └── requirements.txt            # 项目依赖
 ```
 
@@ -52,7 +51,8 @@ python train_vqvae.py \
   --batch_size 16 \
   --image_size 256 \
   --epochs 100 \
-  --lr 1e-4
+  --lr 1e-4 \
+  --use_perceptual
 ```
 
 主要参数说明：
@@ -62,11 +62,14 @@ python train_vqvae.py \
 - `--image_size`: 图像尺寸
 - `--epochs`: 训练轮数
 - `--lr`: 学习率
-- `--vq_embed_dim`: VQ嵌入维度
-- `--vq_num_embed`: VQ嵌入数量
+- `--latent_channels`: 潜变量通道数（默认为2）
+- `--vq_embed_dim`: VQ嵌入维度（默认为2）
+- `--vq_num_embed`: VQ嵌入数量（默认为64）
+- `--n_layers`: 下采样层数（默认为3，生成32x32潜在空间）
 - `--use_wandb`: 是否使用wandb记录训练过程
 - `--use_perceptual`: 是否使用感知损失
-- `--lambda_perceptual`: 感知损失权重
+- `--lambda_perceptual`: 感知损失权重（默认为0.1）
+- `--fp16`: 是否使用半精度训练
 
 ### 2. 训练LDM模型
 
@@ -83,6 +86,7 @@ python train_ldm.py \
 
 主要参数说明：
 - `--vqvae_model_path`: 预训练的VQ-VAE模型路径
+- `--latent_channels`: 潜变量通道数（默认为2）
 - `--mixed_precision`: 混合精度训练，可选["no", "fp16", "bf16"]
 - `--save_epochs`: 每多少个epoch保存一次模型
 - `--save_images`: 是否保存生成图像
@@ -181,72 +185,50 @@ python train_vqvae.py \
 
 项目已针对Kaggle环境进行了兼容性优化。如在Kaggle上使用，请遵循以下步骤：
 
-### 环境设置
-
-在notebook开头运行以下代码下载并配置项目：
-
-```python
-# 克隆项目
-!git clone https://github.com/heimaoqqq/VQ-VAE.git
-%cd VQ-VAE
-
-# 设置环境
-!python kaggle_setup.py
-```
-
-### 数据处理
-
-根据您的数据集位置进行相应配置：
-
-```python
-# 如果您的数据集在Kaggle dataset中：
-!ln -s /kaggle/input/your-dataset-name dataset
-
-# 或者复制数据集
-!cp -r /kaggle/input/your-dataset-name dataset
-```
-
 ### Kaggle训练命令
 
 ```python
-# 训练VQ-VAE
+# 训练VQ-VAE（完整指令）
 !python train_vqvae.py \
-  --data_dir dataset \
+  --data_dir /kaggle/input/dataset \
   --output_dir vqvae_model \
   --batch_size 16 \
-  --kaggle \
-  --fp16 \
-  --epochs 20 \
+  --image_size 256 \
+  --epochs 100 \
+  --lr 1e-4 \
   --use_perceptual \
-  --lambda_perceptual 0.1
+  --fp16
 
 # 训练LDM
 !python train_ldm.py \
-  --data_dir dataset \
+  --data_dir /kaggle/input/dataset \
   --vqvae_model_path vqvae_model \
   --output_dir ldm_model \
   --batch_size 16 \
-  --kaggle \
-  --mixed_precision fp16 \
-  --epochs 20
+  --image_size 256 \
+  --epochs 100 \
+  --lr 1e-4 \
+  --mixed_precision fp16
 ```
 
-### 常见问题解决
+## 模型配置说明
 
-如遇到依赖问题，执行：
+最新版本针对微多普勒时频图的特点，对模型大小进行了优化，以提高训练速度：
 
-```python
-# 安装兼容版本的依赖
-!pip install huggingface_hub>=0.20.2
-!pip install diffusers>=0.26.3 --no-deps
-!pip install torch torchvision
-```
+### 默认模型配置
+- 下采样层数: 3（生成32x32潜在空间）
+- 起始通道数: 32（原为64）
+- 最大通道数: 256（原为512）
+- 潜变量通道数: 2（原为4）
+- 码本大小: 64（原为256）
+
+这些配置基于微多普勒时频图特征相对简单的特点进行了优化，在保持重建质量的前提下大幅提升训练速度。
 
 ## 注意事项
 
 1. 确保数据集中的图像均为256×256彩色图像
 2. VQ-VAE训练通常比LDM训练收敛更快
-3. 生成效果与训练数据质量、模型架构和训练参数密切相关
+3. 如果码本利用率较低(低于30%)，可以考虑进一步减小码本大小
 4. 在大规模数据集上可能需要调整模型架构和训练策略
 5. 默认已配置模型保存策略，包括：
    - 每5轮保存一次模型（可通过--save_epochs调整）
