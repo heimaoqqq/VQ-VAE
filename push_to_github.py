@@ -18,7 +18,7 @@ def push_to_github():
         return False
     
     # 提交更改
-    commit_message = "增强模型表示能力:\n- 增加码本大小从64->128\n- 增加潜在通道数从2->4\n- 更新README.md中的相关说明\n- 适应微多普勒时频图的复杂特征"
+    commit_message = "修复GradScaler兼容性问题: 移除device_type参数以兼容较早版本的PyTorch"
     if not run_command(f'git commit -m "{commit_message}"'):
         print("提交更改失败")
         return False

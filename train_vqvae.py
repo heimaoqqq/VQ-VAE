@@ -100,7 +100,7 @@ def train_vqvae(args):
     # 使用混合精度训练（用于16G显存）
     if args.fp16 and args.device != "cpu":
         from torch.amp import GradScaler, autocast
-        scaler = GradScaler(device_type='cuda')
+        scaler = GradScaler()  # 移除device_type参数，兼容旧版PyTorch
         print("使用混合精度训练 (FP16)")
     else:
         scaler = None
