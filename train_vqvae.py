@@ -108,6 +108,7 @@ def parse_args():
     parser.add_argument("--num_train_steps", type=int, default=None, help="训练步数")
     parser.add_argument("--save_epochs", type=int, default=5, help="每多少个epoch保存一次模型")
     parser.add_argument("--logging_steps", type=int, default=100, help="日志间隔步数")
+    parser.add_argument("--eval_steps", type=int, default=500, help="验证间隔步数")
     parser.add_argument("--latent_channels", type=int, default=4, help="潜变量通道数")
     parser.add_argument("--vq_embed_dim", type=int, default=128, help="VQ嵌入维度")
     parser.add_argument("--vq_num_embed", type=int, default=256, help="VQ嵌入数量")
@@ -294,7 +295,7 @@ class VQModelTrainer:
         self.optimizer.zero_grad()
         
         # 使用自动混合精度
-        with torch.cuda.amp.autocast():
+        with torch.amp.autocast(device_type='cuda'):
             # 前向传播
             encoder_output = self.model.encode(batch)
             decoder_output = self.model.decode(encoder_output.latents)
@@ -418,8 +419,8 @@ def train_vqvae(args):
     
     # 使用混合精度训练（用于16G显存）
     if args.fp16 and args.device != "cpu":
-        from torch.cuda.amp import GradScaler, autocast
-        scaler = GradScaler()
+        from torch.amp import GradScaler, autocast
+        scaler = GradScaler(device_type='cuda')
         print("使用混合精度训练 (FP16)")
     else:
         scaler = None
