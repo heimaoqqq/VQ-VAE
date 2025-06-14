@@ -27,12 +27,15 @@ def validate(model, vq_model, dataloader, noise_scheduler, accelerator):
             # 使用VQ-VAE编码图像到潜在空间
             latents = vq_model.encode(batch).latents
             
-            # 添加噪声
-            noise = torch.randn_like(latents)
-            timesteps = torch.randint(
-                0, noise_scheduler.num_train_timesteps, (latents.shape[0],), device=latents.device
-            ).long()
-            noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+            # 使用固定随机种子生成噪声和时间步
+            with torch.random.fork_rng():
+                torch.manual_seed(42)  # 固定种子
+                # 添加噪声
+                noise = torch.randn_like(latents)
+                timesteps = torch.randint(
+                    0, noise_scheduler.num_train_timesteps, (latents.shape[0],), device=latents.device
+                ).long()
+                noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
             
             # 预测噪声
             noise_pred = model(noisy_latents, timesteps).sample
