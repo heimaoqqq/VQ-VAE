@@ -46,7 +46,7 @@ class MicroDopplerDataset(Dataset):
             
         return image
 
-def get_dataloaders(data_dir, batch_size=32, image_size=256, train_ratio=0.9, val_ratio=0.1):
+def get_dataloaders(data_dir, batch_size=32, image_size=256, train_ratio=0.8, val_ratio=0.2):
     """
     创建训练、验证和测试数据加载器
     
@@ -70,7 +70,7 @@ def get_dataloaders(data_dir, batch_size=32, image_size=256, train_ratio=0.9, va
     # 创建数据集
     dataset = MicroDopplerDataset(data_dir, transform=transform, image_size=image_size)
     
-    # 分割数据集为9:1 (训练集:验证集)
+    # 分割数据集为8:2 (训练集:验证集)
     total_size = len(dataset)
     train_size = int(train_ratio * total_size)
     val_size = total_size - train_size
@@ -99,7 +99,7 @@ if __name__ == "__main__":
     
     # 测试数据加载器
     train_loader, val_loader, _ = get_dataloaders("dataset", batch_size=16)
-    print(f"训练集: {len(train_loader.dataset)}个样本 (90%)")
-    print(f"验证集: {len(val_loader.dataset)}个样本 (10%)")
+    print(f"训练集: {len(train_loader.dataset)}个样本 (80%)")
+    print(f"验证集: {len(val_loader.dataset)}个样本 (20%)")
     print(f"训练批次数: {len(train_loader)}")
     print(f"验证批次数: {len(val_loader)}") 
