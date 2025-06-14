@@ -26,6 +26,11 @@ from ldm.utils.config import parse_args
 
 def train_ldm(args):
     """训练潜在扩散模型主函数"""
+    # 设置全局随机种子以提高可重复性
+    torch.manual_seed(42)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(42)
+    
     os.makedirs(args.output_dir, exist_ok=True)
     
     # 创建数据加载器
@@ -37,6 +42,7 @@ def train_ldm(args):
     print(f"数据集总样本数: {total_samples}")
     print(f"训练集样本数: {len(train_dataloader.dataset)} ({len(train_dataloader.dataset)/total_samples*100:.1f}%)")
     print(f"验证集样本数: {len(val_dataloader.dataset)} ({len(val_dataloader.dataset)/total_samples*100:.1f}%)")
+    print(f"数据集分割比例: 训练集 80% : 验证集 20%")
     print("-" * 50)
     
     # 加载预训练的VQ-VAE模型
