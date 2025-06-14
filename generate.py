@@ -24,6 +24,7 @@ def parse_args():
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="设备")
     parser.add_argument("--seed", type=int, default=42, help="随机种子")
     parser.add_argument("--grid", action="store_true", help="是否生成网格图像")
+    parser.add_argument("--scheduler_type", type=str, default="ddim", choices=["ddpm", "ddim", "pndm"], help="采样器类型，默认为DDIM")
     return parser.parse_args()
 
 def generate_images(args):
@@ -55,11 +56,29 @@ def generate_images(args):
         
         from diffusers import UNet2DModel
         
-        # 首先尝试加载调度器
+        # 根据参数选择采样器类型
         try:
+            if args.scheduler_type.lower() == "ddim":
+                from diffusers import DDIMScheduler
+                scheduler = DDIMScheduler.from_pretrained(args.ldm_path)
+                print("使用DDIM采样器")
+            elif args.scheduler_type.lower() == "pndm":
+                from diffusers import PNDMScheduler
+                scheduler = PNDMScheduler.from_pretrained(args.ldm_path)
+                print("使用PNDM采样器")
+            else:
             scheduler = DDPMScheduler.from_pretrained(args.ldm_path)
-        except Exception:
-            print("无法加载调度器，使用默认配置")
+                print("使用DDPM采样器")
+        except Exception as e:
+            print(f"无法加载特定调度器: {e}，使用默认配置")
+            # 默认使用DDIM
+            if args.scheduler_type.lower() == "ddim":
+                from diffusers import DDIMScheduler
+                scheduler = DDIMScheduler(num_train_timesteps=1000)
+            elif args.scheduler_type.lower() == "pndm":
+                from diffusers import PNDMScheduler
+                scheduler = PNDMScheduler(num_train_timesteps=1000)
+            else:
             scheduler = DDPMScheduler(num_train_timesteps=1000)
         
         # 尝试不同的路径加载UNet
@@ -244,8 +263,10 @@ if __name__ == "__main__":
     
     # 检查是否需要创建自定义Pipeline
     if args.vqvae_path and args.ldm_path:
-        create_pipeline = input("是否创建并保存自定义Pipeline？(y/n): ")
-        if create_pipeline.lower() == "y":
+        # 自动创建Pipeline而不需要交互式输入
+        create_pipeline = True  # 默认创建Pipeline
+        # create_pipeline = input("是否创建并保存自定义Pipeline？(y/n): ").lower() == "y"
+        if create_pipeline:
             create_custom_pipeline(args)
     
     generate_images(args) 
