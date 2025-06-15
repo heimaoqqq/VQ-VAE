@@ -31,8 +31,8 @@ def create_unet_model(latent_size, latent_channels=4):
         down_block_types = ("DownBlock2D", "AttnDownBlock2D", "DownBlock2D")
         up_block_types = ("UpBlock2D", "AttnUpBlock2D", "UpBlock2D")
     
-    # 使用4头自注意力，平衡性能和显存使用
-    attention_head_dim = 4
+    # 使用8头自注意力，平衡性能和显存使用
+    attention_head_dim = 8
     
     print(f"模型结构: 下采样块={down_block_types}, 上采样块={up_block_types}")
     print(f"注意力头数: {attention_head_dim}")
