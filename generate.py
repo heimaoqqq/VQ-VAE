@@ -11,7 +11,6 @@ from diffusers import (
     DDPMPipeline
 )
 from torchvision.utils import make_grid, save_image
-from vqvae.utils.normalization import MicroDopplerNormalizer
 
 def parse_args():
     parser = argparse.ArgumentParser(description="生成微多普勒时频图")
@@ -26,11 +25,6 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42, help="随机种子")
     parser.add_argument("--grid", action="store_true", help="是否生成网格图像")
     parser.add_argument("--scheduler_type", type=str, default="ddim", choices=["ddpm", "ddim", "pndm"], help="采样器类型，默认为DDIM")
-    # 分段自适应标准化相关参数
-    parser.add_argument("--use_adaptive_norm", action="store_true", help="是否使用分段自适应标准化")
-    parser.add_argument("--split_ratio", type=float, default=0.5, help="图像分割比例，用于分段标准化")
-    parser.add_argument("--lower_quantile", type=float, default=0.01, help="下半部分的下分位数")
-    parser.add_argument("--upper_quantile", type=float, default=0.99, help="下半部分的上分位数")
     return parser.parse_args()
 
 def generate_images(args):
@@ -49,28 +43,6 @@ def generate_images(args):
         vq_model.eval()
     except Exception as e:
         raise ValueError(f"无法加载VQ-VAE模型: {e}")
-    
-    # 检查是否有标准化配置文件
-    norm_config_path = os.path.join(args.vqvae_path, "final", "norm_config.pt")
-    if os.path.exists(norm_config_path):
-        norm_config = torch.load(norm_config_path)
-        args.use_adaptive_norm = norm_config.get('use_adaptive_norm', args.use_adaptive_norm)
-        args.split_ratio = norm_config.get('split_ratio', args.split_ratio)
-        args.lower_quantile = norm_config.get('lower_quantile', args.lower_quantile)
-        args.upper_quantile = norm_config.get('upper_quantile', args.upper_quantile)
-        print("已加载标准化配置:")
-        print(f"  - 使用分段自适应标准化: {'是' if args.use_adaptive_norm else '否'}")
-        print(f"  - 分割比例: {args.split_ratio}")
-        print(f"  - 下半部分分位数范围: [{args.lower_quantile}, {args.upper_quantile}]")
-    
-    # 如果使用分段自适应标准化，创建标准化器
-    normalizer = None
-    if args.use_adaptive_norm:
-        normalizer = MicroDopplerNormalizer(
-            split_ratio=args.split_ratio,
-            lower_quantile=args.lower_quantile,
-            upper_quantile=args.upper_quantile
-        )
     
     # 尝试加载Pipeline或者单独的UNet模型
     print(f"正在加载LDM模型: {args.ldm_path}")
@@ -95,7 +67,7 @@ def generate_images(args):
                 scheduler = PNDMScheduler.from_pretrained(args.ldm_path)
                 print("使用PNDM采样器")
             else:
-                scheduler = DDPMScheduler.from_pretrained(args.ldm_path)
+            scheduler = DDPMScheduler.from_pretrained(args.ldm_path)
                 print("使用DDPM采样器")
         except Exception as e:
             print(f"无法加载特定调度器: {e}，使用默认配置")
@@ -107,7 +79,7 @@ def generate_images(args):
                 from diffusers import PNDMScheduler
                 scheduler = PNDMScheduler(num_train_timesteps=1000)
             else:
-                scheduler = DDPMScheduler(num_train_timesteps=1000)
+            scheduler = DDPMScheduler(num_train_timesteps=1000)
         
         # 尝试不同的路径加载UNet
         possible_unet_paths = [
@@ -167,18 +139,6 @@ def generate_images(args):
         # 转换为[0,1]区间
         images = (images / 2 + 0.5).clamp(0, 1)
         
-        # 如果使用了分段自适应标准化，需要反归一化
-        if args.use_adaptive_norm and normalizer is not None:
-            # 将图像保存为标准化前的状态
-            raw_images = images.clone()
-            
-            # 对每个图像进行反归一化
-            for idx in range(images.shape[0]):
-                # 先标准化一次以记录参数
-                _ = normalizer.normalize(raw_images[idx])
-                # 然后反归一化
-                images[idx] = normalizer.denormalize(images[idx])
-        
         # 保存单独的图像
         for j, image in enumerate(images):
             if not args.grid:
@@ -204,16 +164,6 @@ def create_custom_pipeline(args):
         print(f"成功加载VQ-VAE模型: {args.vqvae_path}")
     except Exception as e:
         raise ValueError(f"无法加载VQ-VAE模型: {e}")
-    
-    # 检查是否有标准化配置文件
-    norm_config_path = os.path.join(args.vqvae_path, "final", "norm_config.pt")
-    if os.path.exists(norm_config_path):
-        norm_config = torch.load(norm_config_path)
-        args.use_adaptive_norm = norm_config.get('use_adaptive_norm', args.use_adaptive_norm)
-        args.split_ratio = norm_config.get('split_ratio', args.split_ratio)
-        args.lower_quantile = norm_config.get('lower_quantile', args.lower_quantile)
-        args.upper_quantile = norm_config.get('upper_quantile', args.upper_quantile)
-        print("已加载标准化配置")
     
     # 检查LDM是否已经是完整的Pipeline
     try:
@@ -250,22 +200,13 @@ def create_custom_pipeline(args):
     
     # 创建自定义Pipeline
     class VQDiffusionPipeline(DiffusionPipeline):
-        def __init__(self, vqvae, unet, scheduler, use_adaptive_norm=False, 
-                     split_ratio=0.5, lower_quantile=0.01, upper_quantile=0.99):
+        def __init__(self, vqvae, unet, scheduler):
             super().__init__()
             self.register_modules(
                 vqvae=vqvae,
                 unet=unet,
                 scheduler=scheduler,
             )
-            self.use_adaptive_norm = use_adaptive_norm
-            if self.use_adaptive_norm:
-                from vqvae.utils.normalization import MicroDopplerNormalizer
-                self.normalizer = MicroDopplerNormalizer(
-                    split_ratio=split_ratio,
-                    lower_quantile=lower_quantile,
-                    upper_quantile=upper_quantile
-                )
         
         @torch.no_grad()
         def __call__(self, batch_size=1, generator=None, num_inference_steps=1000, output_type="pil"):
@@ -294,18 +235,6 @@ def create_custom_pipeline(args):
             # 后处理
             images = (images / 2 + 0.5).clamp(0, 1)
             
-            # 如果使用了分段自适应标准化，需要反归一化
-            if self.use_adaptive_norm and hasattr(self, 'normalizer'):
-                # 将图像保存为标准化前的状态
-                raw_images = images.clone()
-                
-                # 对每个图像进行反归一化
-                for idx in range(images.shape[0]):
-                    # 先标准化一次以记录参数
-                    _ = self.normalizer.normalize(raw_images[idx].cpu())
-                    # 然后反归一化
-                    images[idx] = self.normalizer.denormalize(images[idx].cpu()).to(images.device)
-            
             if output_type == "pil":
                 images = images.cpu().permute(0, 2, 3, 1).numpy()
                 images = (images * 255).astype(np.uint8)
@@ -318,27 +247,12 @@ def create_custom_pipeline(args):
         vqvae=vq_model,
         unet=unet,
         scheduler=scheduler,
-        use_adaptive_norm=args.use_adaptive_norm,
-        split_ratio=args.split_ratio,
-        lower_quantile=args.lower_quantile,
-        upper_quantile=args.upper_quantile
     )
     
     # 保存Pipeline
     pipeline_path = os.path.join(args.output_dir, "vq_diffusion_pipeline")
     os.makedirs(pipeline_path, exist_ok=True)
     pipeline.save_pretrained(pipeline_path)
-    
-    # 保存标准化配置
-    if args.use_adaptive_norm:
-        norm_config = {
-            'use_adaptive_norm': args.use_adaptive_norm,
-            'split_ratio': args.split_ratio,
-            'lower_quantile': args.lower_quantile,
-            'upper_quantile': args.upper_quantile
-        }
-        torch.save(norm_config, os.path.join(pipeline_path, "norm_config.pt"))
-        print("已保存标准化配置")
     
     print(f"自定义Pipeline已保存到: {pipeline_path}")
     return pipeline

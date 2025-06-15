@@ -4,48 +4,25 @@ from PIL import Image
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
-from vqvae.utils.normalization import MicroDopplerNormalizer
 
 class MicroDopplerDataset(Dataset):
-    def __init__(self, data_dir, transform=None, image_size=256, use_adaptive_norm=False, 
-                 split_ratio=0.5, lower_quantile=0.01, upper_quantile=0.99):
+    def __init__(self, data_dir, transform=None, image_size=256):
         """
         微多普勒时频图数据集
         
         参数:
             data_dir (str): 数据集根目录
             image_size (int): 图像尺寸
-            use_adaptive_norm (bool): 是否使用分段自适应标准化
-            split_ratio (float): 图像分割比例，用于分段标准化
-            lower_quantile (float): 下半部分的下分位数
-            upper_quantile (float): 下半部分的上分位数
         """
         self.data_dir = data_dir
         self.transform = transform
-        self.use_adaptive_norm = use_adaptive_norm
         
-        if self.use_adaptive_norm:
-            # 使用分段自适应标准化
-            self.normalizer = MicroDopplerNormalizer(
-                split_ratio=split_ratio,
-                lower_quantile=lower_quantile,
-                upper_quantile=upper_quantile
-            )
-            
-            # 只进行基本转换，不进行标准化
-            if self.transform is None:
-                self.transform = transforms.Compose([
-                    transforms.Resize((image_size, image_size)),
-                    transforms.ToTensor(),  # 转换为[0,1]范围的张量
-                ])
-        else:
-            # 使用传统标准化
-            if self.transform is None:
-                self.transform = transforms.Compose([
-                    transforms.Resize((image_size, image_size)),
-                    transforms.ToTensor(),
-                    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-                ])
+        if self.transform is None:
+            self.transform = transforms.Compose([
+                transforms.Resize((image_size, image_size)),
+                transforms.ToTensor(),
+                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+            ])
         
         # 获取所有子目录下的图像路径
         self.image_paths = []
@@ -67,14 +44,9 @@ class MicroDopplerDataset(Dataset):
         if self.transform:
             image = self.transform(image)
             
-        # 应用分段自适应标准化
-        if self.use_adaptive_norm:
-            image = self.normalizer.normalize(image)
-            
         return image
 
-def get_dataloaders(data_dir, batch_size=32, image_size=256, train_ratio=0.8, val_ratio=0.2, 
-                   use_adaptive_norm=False, split_ratio=0.5, lower_quantile=0.01, upper_quantile=0.99):
+def get_dataloaders(data_dir, batch_size=32, image_size=256, train_ratio=0.8, val_ratio=0.2):
     """
     创建训练、验证和测试数据加载器
     
@@ -84,38 +56,19 @@ def get_dataloaders(data_dir, batch_size=32, image_size=256, train_ratio=0.8, va
         image_size: 图像尺寸
         train_ratio: 训练集比例
         val_ratio: 验证集比例
-        use_adaptive_norm: 是否使用分段自适应标准化
-        split_ratio: 图像分割比例，用于分段标准化
-        lower_quantile: 下半部分的下分位数
-        upper_quantile: 下半部分的上分位数
     
     返回:
         train_dataloader, val_dataloader, test_dataloader (测试集为None)
     """
-    if use_adaptive_norm:
-        # 使用分段自适应标准化时，只进行基本转换
-        transform = transforms.Compose([
-            transforms.Resize((image_size, image_size)),
-            transforms.ToTensor(),  # 转换为[0,1]范围的张量
-        ])
-    else:
-        # 使用传统标准化
-        transform = transforms.Compose([
-            transforms.Resize((image_size, image_size)),
-            transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-        ])
+    # 定义数据转换 - 移除了RandomHorizontalFlip()，只保留基本的预处理
+    transform = transforms.Compose([
+        transforms.Resize((image_size, image_size)),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    ])
     
     # 创建数据集
-    dataset = MicroDopplerDataset(
-        data_dir, 
-        transform=transform, 
-        image_size=image_size,
-        use_adaptive_norm=use_adaptive_norm,
-        split_ratio=split_ratio,
-        lower_quantile=lower_quantile,
-        upper_quantile=upper_quantile
-    )
+    dataset = MicroDopplerDataset(data_dir, transform=transform, image_size=image_size)
     
     # 分割数据集为8:2 (训练集:验证集)
     total_size = len(dataset)
@@ -137,16 +90,15 @@ def get_dataloaders(data_dir, batch_size=32, image_size=256, train_ratio=0.8, va
 
 if __name__ == "__main__":
     # 测试数据集
-    dataset = MicroDopplerDataset("dataset", use_adaptive_norm=True)
+    dataset = MicroDopplerDataset("dataset")
     print(f"数据集大小: {len(dataset)}")
     
     # 测试第一张图像
     sample = dataset[0]
     print(f"图像张量形状: {sample.shape}")
-    print(f"图像数值范围: [{sample.min().item():.4f}, {sample.max().item():.4f}]")
     
     # 测试数据加载器
-    train_loader, val_loader, _ = get_dataloaders("dataset", batch_size=16, use_adaptive_norm=True)
+    train_loader, val_loader, _ = get_dataloaders("dataset", batch_size=16)
     print(f"训练集: {len(train_loader.dataset)}个样本 (80%)")
     print(f"验证集: {len(val_loader.dataset)}个样本 (20%)")
     print(f"训练批次数: {len(train_loader)}")
