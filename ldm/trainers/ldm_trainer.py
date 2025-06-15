@@ -130,6 +130,39 @@ class LDMTrainer:
                 init_kwargs={"wandb": {"name": args.wandb_name}}
             )
     
+    def load_checkpoint(self, checkpoint_path):
+        """
+        从检查点恢复训练状态
+        
+        参数:
+            checkpoint_path: 检查点路径
+        """
+        try:
+            # 检查检查点路径是否存在
+            if not os.path.exists(checkpoint_path):
+                raise ValueError(f"检查点路径不存在: {checkpoint_path}")
+            
+            print(f"正在从 {checkpoint_path} 加载检查点...")
+            
+            # 使用accelerator加载检查点
+            self.accelerator.load_state(checkpoint_path)
+            
+            # 尝试加载最佳验证损失
+            best_val_loss_path = os.path.join(checkpoint_path, "best_val_loss.pt")
+            if os.path.exists(best_val_loss_path):
+                self.best_val_loss = torch.load(best_val_loss_path).item()
+                print(f"已加载最佳验证损失: {self.best_val_loss:.6f}")
+            else:
+                # 如果没有保存最佳验证损失，则使用默认值
+                print("未找到保存的最佳验证损失，使用默认值")
+                self.best_val_loss = float('inf')
+            
+            print("检查点加载成功！")
+            return True
+        except Exception as e:
+            print(f"加载检查点时出错: {e}")
+            return False
+    
     def train(self):
         """执行完整的训练流程"""
         global_step = 0
@@ -280,6 +313,11 @@ class LDMTrainer:
                     
                     self.accelerator.save_state(best_checkpoint_path)
                     pipeline.save_pretrained(best_pipeline_path)
+                    
+                    # 保存最佳验证损失
+                    best_val_loss_path = os.path.join(best_checkpoint_path, "best_val_loss.pt")
+                    torch.save(torch.tensor(self.best_val_loss), best_val_loss_path)
+                    
                     print(f"新的最佳模型已保存到 {best_checkpoint_path} (验证损失: {self.best_val_loss:.6f})")
                     
                     if self.args.use_wandb:
