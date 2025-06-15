@@ -65,6 +65,11 @@ def train_ldm(args):
         beta_schedule=args.beta_schedule
     )
     
+    # 如果指定了检查点路径，则从检查点恢复训练
+    if args.resume_from_checkpoint:
+        print(f"正在从检查点恢复训练: {args.resume_from_checkpoint}")
+        trainer.load_checkpoint(args.resume_from_checkpoint)
+    
     # 开始训练
     trainer.train()
 
