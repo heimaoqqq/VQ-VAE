@@ -47,10 +47,6 @@ def create_vq_model(args):
         num_vq_embeddings=args.vq_num_embed,
         vq_embed_dim=vq_embed_dim,  # 设置为与latent_channels相同
         norm_num_groups=8,  # 对小batch_size更友好
-        norm_type="group",  # 使用组归一化
-        # 添加注意力层以提高空间信息保留能力
-        mid_block_add_attention=True,  # 在中间块添加注意力机制
-        add_attention=True,  # 在上采样块添加注意力机制
-        attention_head_dim=64,  # 注意力头维度
+        norm_type="group"  # 使用组归一化
     )
     return model 
