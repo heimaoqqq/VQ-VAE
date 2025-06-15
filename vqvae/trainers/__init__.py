@@ -1,7 +1,7 @@
 """
-VQ-VAE 训练器
+VQ-VAE 训练器模块
 """
 
-from .vqtrainer import VQModelTrainer
+from .vqvae_trainer import VQVAETrainer
  
-__all__ = ['VQModelTrainer'] 
+__all__ = ['VQVAETrainer'] 

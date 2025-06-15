@@ -13,11 +13,12 @@ def create_vq_model(args):
     down_block_types = ["DownEncoderBlock2D"] * n_layers
     up_block_types = ["UpDecoderBlock2D"] * n_layers
     
-    # 构建通道配置，每下采样一层通道数翻倍，最多到256
+    # 构建通道配置，每下采样一层通道数翻倍，最多到512
+    # 为微多普勒时频图优化的通道配置
     block_out_channels = []
-    current_channels = 32  # 起始通道数降低至32（原为64）
+    current_channels = 64  # 起始通道数增加到64（原为32）
     for i in range(n_layers):
-        current_channels = min(current_channels * 2, 256)  # 最大通道数降低至256（原为512）
+        current_channels = min(current_channels * 2, 512)  # 最大通道数增加到512（原为256）
         block_out_channels.append(current_channels)
     
     # 确保vq_embed_dim与latent_channels一致
@@ -46,5 +47,10 @@ def create_vq_model(args):
         num_vq_embeddings=args.vq_num_embed,
         vq_embed_dim=vq_embed_dim,  # 设置为与latent_channels相同
         norm_num_groups=8,  # 对小batch_size更友好
+        norm_type="group",  # 使用组归一化
+        # 添加注意力层以提高空间信息保留能力
+        mid_block_add_attention=True,  # 在中间块添加注意力机制
+        add_attention=True,  # 在上采样块添加注意力机制
+        attention_head_dim=64,  # 注意力头维度
     )
     return model 
