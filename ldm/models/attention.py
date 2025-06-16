@@ -174,7 +174,7 @@ class MixedAttentionProcessor(nn.Module):
         else:
             raise ValueError(f"注意力类型 {attention_type} 不支持。请选择 'window' 或 'axial'")
     
-    def __call__(self, attn_output, hidden_states, encoder_hidden_states=None, attention_mask=None, **kwargs):
+    def __call__(self, attn_output, hidden_states, encoder_hidden_states=None, attention_mask=None, temb=None, **kwargs):
         """
         处理来自diffusers注意力层的输入
         
