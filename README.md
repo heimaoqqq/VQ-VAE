@@ -42,6 +42,18 @@ pip install -r requirements.txt
 1. 训练VQ-VAE模型，将微多普勒图像压缩到离散的潜在空间
 2. 训练LDM模型，学习在VQ-VAE的潜在空间中生成新样本
 
+### 优化的扩散模型架构
+
+本项目针对微多普勒时频图的特性，优化了扩散模型的架构设计：
+
+- **增强的注意力机制**：在多个层级添加注意力块，提升对时频特征的捕获能力
+- **优化的通道配置**：`(192, 384, 512, 640)`，平衡模型表达能力与显存使用
+- **内存高效注意力**：使用优化的注意力实现，减少显存占用
+- **梯度累积训练**：支持梯度累积，在有限显存下模拟更大批次训练
+- **学习率调度**：添加余弦学习率调度器，提升训练稳定性
+- **推荐beta调度器**：针对时频图特性，推荐使用`squaredcos_cap_v2`调度器
+- **DDIM高效采样**：优化DDIM采样步数为50步，提升生成效率
+
 ### 1. 训练VQ-VAE模型
 
 ```bash
@@ -84,25 +96,34 @@ pip install -r requirements.txt
 ```bash
 python train_ldm.py \
   --data_dir dataset \
-  --vqvae_model_path vqvae_model \
+  --vqvae_path vqvae_model \
   --output_dir ldm_model \
-  --batch_size 16 \
+  --batch_size 2 \
   --image_size 256 \
   --epochs 100 \
-  --lr 1e-4 \
+  --lr 5e-5 \
   --save_images \
-  --eval_steps 1000
+  --eval_steps 500 \
+  --mixed_precision fp16 \
+  --beta_schedule squaredcos_cap_v2 \
+  --scheduler_type ddim \
+  --gradient_accumulation_steps 4 \
+  --num_inference_steps 50
 ```
 
 主要参数说明：
-- `--vqvae_model_path`: 预训练的VQ-VAE模型路径
+- `--vqvae_path`: 预训练的VQ-VAE模型路径
 - `--latent_channels`: 潜变量通道数（默认为4）
+- `--batch_size`: 批次大小（推荐16GB显存使用2-4）
 - `--save_epochs`: 每多少轮保存一次模型（默认为5）
 - `--save_images`: 是否保存生成图像
 - `--eval_steps`: 每多少步评估并生成样本图像（默认为1000）
 - `--logging_steps`: 日志记录间隔步数（默认为100）
 - `--mixed_precision`: 混合精度训练，可选["no", "fp16", "bf16"]
-- `--num_inference_steps`: 推理步数（默认为50）
+- `--beta_schedule`: beta调度类型，可选["linear", "cosine", "squaredcos_cap_v2"]
+- `--scheduler_type`: 采样器类型，可选["ddpm", "ddim", "pndm"]
+- `--gradient_accumulation_steps`: 梯度累积步数，用于模拟更大批次
+- `--num_inference_steps`: 推理步数（DDIM推荐50步）
 
 ## 生成新图像
 
@@ -115,7 +136,9 @@ python generate.py \
   --output_dir generated_images \
   --num_samples 16 \
   --batch_size 4 \
-  --num_inference_steps 1000 \
+  --num_inference_steps 50 \
+  --scheduler_type ddim \
+  --beta_schedule squaredcos_cap_v2 \
   --grid
 ```
 
@@ -168,7 +191,7 @@ python train_vqvae.py \
 ### 16GB+ 显存GPU配置
 
 ```bash
-# 16GB显存优化配置
+# 16GB显存 VQ-VAE 优化配置
 python train_vqvae.py \
   --batch_size 32 \
   --lr 1e-4 \
@@ -181,11 +204,32 @@ python train_vqvae.py \
   --lambda_perceptual 0.1  # 感知损失权重
 ```
 
+```bash
+# 16GB显存 LDM扩散模型 优化配置
+python train_ldm.py \
+  --batch_size 2 \
+  --lr 5e-5 \
+  --mixed_precision fp16 \
+  --gradient_accumulation_steps 4 \
+  --beta_schedule squaredcos_cap_v2 \
+  --scheduler_type ddim \
+  --num_inference_steps 50 \
+  --use_wandb  # 可选，使用wandb可视化训练过程
+```
+
 主要优化点：
-- 批次大小增加到32
-- 增大模型容量（码本大小）
-- 使用所有4层下采样结构
-- 启用感知损失提升重建质量
+- VQ-VAE模型：
+  - 批次大小增加到32
+  - 增大模型容量（码本大小）
+  - 使用所有4层下采样结构
+  - 启用感知损失提升重建质量
+
+- LDM扩散模型：
+  - 使用梯度累积（4步）模拟更大批次
+  - 增强多层注意力机制捕获时频特征
+  - 优化通道配置 (192, 384, 512, 640)
+  - 使用内存高效注意力实现
+  - 采用squaredcos_cap_v2调度器提高训练质量
 
 ### 重要提示
 
