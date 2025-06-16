@@ -85,6 +85,29 @@ class MixedAttentionUNetWrapper:
     def __call__(self, *args, **kwargs):
         """委托给原始模型"""
         return self.model(*args, **kwargs)
+    
+    def parameters(self):
+        """委托给原始模型的parameters方法"""
+        return self.model.parameters()
+    
+    def named_parameters(self):
+        """委托给原始模型的named_parameters方法"""
+        return self.model.named_parameters()
+    
+    def to(self, *args, **kwargs):
+        """委托给原始模型的to方法"""
+        self.model = self.model.to(*args, **kwargs)
+        return self
+    
+    def eval(self):
+        """委托给原始模型的eval方法"""
+        self.model.eval()
+        return self
+    
+    def train(self, mode=True):
+        """委托给原始模型的train方法"""
+        self.model.train(mode)
+        return self
 
 
 def create_mixed_attention_unet(latent_size, latent_channels=4, window_size=8):
