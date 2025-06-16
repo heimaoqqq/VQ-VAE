@@ -215,7 +215,8 @@ class MixedAttentionProcessor(nn.Module):
             # 保持[batch_size, channels, height, width]格式
             hidden_states = x
         
-        return hidden_states, None
+        # Diffusers的注意力处理器需要返回一个张量而不是元组
+        return hidden_states
 
 
 def get_attention_processor_for_block(block_idx, total_blocks, hidden_size, num_heads, window_size=8):
