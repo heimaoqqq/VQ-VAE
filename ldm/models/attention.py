@@ -174,21 +174,46 @@ class MixedAttentionProcessor(nn.Module):
         else:
             raise ValueError(f"注意力类型 {attention_type} 不支持。请选择 'window' 或 'axial'")
     
-    def __call__(self, attn_output, hidden_states, encoder_hidden_states=None, attention_mask=None):
-        batch_size, sequence_length, _ = hidden_states.shape
+    def __call__(self, attn_output, hidden_states, encoder_hidden_states=None, attention_mask=None, **kwargs):
+        """
+        处理来自diffusers注意力层的输入
         
-        # 将hidden_states从[b, seq_len, dim]转换为[b, dim, h, w]格式
-        # 假设序列长度是h*w的形式
-        h = w = int(math.sqrt(sequence_length))
-        assert h * w == sequence_length, "序列长度必须是平方数"
-        
-        x = hidden_states.reshape(batch_size, h, w, self.hidden_size).permute(0, 3, 1, 2)
+        参数:
+            attn_output: 注意力层输出，不使用
+            hidden_states: 形状为[batch_size, height*width, hidden_size]或[batch_size, channels, height, width]的输入
+            encoder_hidden_states: 不使用
+            attention_mask: 不使用
+            
+        返回:
+            处理后的hidden_states和None
+        """
+        # 检查输入维度，确定是否需要重塑
+        if len(hidden_states.shape) == 3:
+            # [batch_size, sequence_length, hidden_size] 格式
+            batch_size, sequence_length, _ = hidden_states.shape
+            
+            # 将hidden_states转换为[b, dim, h, w]格式
+            h = w = int(math.sqrt(sequence_length))
+            assert h * w == sequence_length, "序列长度必须是平方数"
+            
+            x = hidden_states.reshape(batch_size, h, w, self.hidden_size).permute(0, 3, 1, 2)
+        elif len(hidden_states.shape) == 4:
+            # 已经是[batch_size, channels, height, width]格式
+            x = hidden_states
+        else:
+            raise ValueError(f"不支持的hidden_states形状: {hidden_states.shape}")
         
         # 应用自定义注意力
         x = self.attention(x)
         
-        # 转回原始形状
-        hidden_states = x.permute(0, 2, 3, 1).reshape(batch_size, sequence_length, self.hidden_size)
+        # 根据输入形状决定输出形状
+        if len(hidden_states.shape) == 3:
+            # 转回[batch_size, sequence_length, hidden_size]格式
+            batch_size, _, h, w = x.shape
+            hidden_states = x.permute(0, 2, 3, 1).reshape(batch_size, h*w, self.hidden_size)
+        else:
+            # 保持[batch_size, channels, height, width]格式
+            hidden_states = x
         
         return hidden_states, None
 
