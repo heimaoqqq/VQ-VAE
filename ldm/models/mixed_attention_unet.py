@@ -95,30 +95,47 @@ class MixedAttentionUNetWrapper:
         return self.model.named_parameters()
     
     def to(self, *args, **kwargs):
-        """委托给原始模型的to方法"""
-        self.model = self.model.to(*args, **kwargs)
+        """委托给原始模型的to方法，并确保所有注意力处理器也正确地移动到设备上"""
+        # 获取目标设备
+        device = None
+        if args:
+            device = args[0]
+        elif 'device' in kwargs:
+            device = kwargs['device']
         
-        # 同时确保注意力处理器也转移到正确的设备
-        device = args[0] if args else kwargs.get('device')
+        # 如果没有指定设备，直接返回
+        if device is None:
+            return self
+            
+        # 移动基础模型
+        self.model = self.model.to(device)
         
-        if device:
-            # 遍历所有块，确保注意力处理器移动到正确设备
-            for block in self.model.down_blocks:
-                if hasattr(block, 'attentions'):
-                    for attn_block in block.attentions:
-                        if hasattr(attn_block, 'processor') and hasattr(attn_block.processor, 'attention'):
-                            attn_block.processor.attention = attn_block.processor.attention.to(device)
-            
-            for block in self.model.up_blocks:
-                if hasattr(block, 'attentions'):
-                    for attn_block in block.attentions:
-                        if hasattr(attn_block, 'processor') and hasattr(attn_block.processor, 'attention'):
-                            attn_block.processor.attention = attn_block.processor.attention.to(device)
-            
-            if hasattr(self.model.mid_block, 'attentions'):
-                for attn_block in self.model.mid_block.attentions:
-                    if hasattr(attn_block, 'processor') and hasattr(attn_block.processor, 'attention'):
-                        attn_block.processor.attention = attn_block.processor.attention.to(device)
+        # 确保所有注意力处理器都在正确的设备上
+        # 下采样块
+        for block in self.model.down_blocks:
+            if hasattr(block, 'attentions'):
+                for attn_block in block.attentions:
+                    if hasattr(attn_block, 'processor'):
+                        processor = attn_block.processor
+                        if hasattr(processor, 'attention'):
+                            processor.attention = processor.attention.to(device)
+        
+        # 上采样块
+        for block in self.model.up_blocks:
+            if hasattr(block, 'attentions'):
+                for attn_block in block.attentions:
+                    if hasattr(attn_block, 'processor'):
+                        processor = attn_block.processor
+                        if hasattr(processor, 'attention'):
+                            processor.attention = processor.attention.to(device)
+        
+        # 中间块
+        if hasattr(self.model.mid_block, 'attentions'):
+            for attn_block in self.model.mid_block.attentions:
+                if hasattr(attn_block, 'processor'):
+                    processor = attn_block.processor
+                    if hasattr(processor, 'attention'):
+                        processor.attention = processor.attention.to(device)
         
         return self
     

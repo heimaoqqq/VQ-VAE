@@ -115,6 +115,14 @@ class LDMTrainer:
             num_training_steps=num_training_steps
         )
         
+        # 确保模型在accelerator.prepare之前就在正确的设备上
+        device = self.accelerator.device
+        print(f"手动将模型移动到设备: {device}")
+        
+        # 首先手动将UNet模型移动到正确设备
+        unet = unet.to(device)
+        vq_model = vq_model.to(device)
+        
         # 使用accelerator准备模型和数据加载器
         (
             self.vq_model, 

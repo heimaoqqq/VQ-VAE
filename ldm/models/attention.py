@@ -176,7 +176,13 @@ class MixedAttentionProcessor(nn.Module):
     
     def to(self, device):
         """将注意力层移动到指定设备"""
-        self.attention = self.attention.to(device)
+        # 处理不同形式的设备参数
+        if isinstance(device, str) or isinstance(device, torch.device):
+            self.attention = self.attention.to(device)
+        else:
+            # 如果第一个参数不是设备，可能是张量类型等其他参数
+            args = (device,)
+            self.attention = self.attention.to(*args)
         return self
     
     def __call__(self, attn_output, hidden_states, encoder_hidden_states=None, attention_mask=None, temb=None, **kwargs):
