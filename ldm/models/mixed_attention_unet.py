@@ -32,12 +32,16 @@ class MixedAttentionUNetWrapper:
         for i, block in enumerate(self.model.down_blocks):
             if hasattr(block, 'attentions'):
                 for j, attn_block in enumerate(block.attentions):
+                    # 获取隐藏维度大小
+                    hidden_size = attn_block.to_q.out_features
+                    num_heads = attn_block.heads
+                    
                     # 应用窗口注意力到前半部分下采样块
                     attn_processor = get_attention_processor_for_block(
                         block_idx=i,
                         total_blocks=down_blocks_count,
-                        hidden_size=attn_block.proj_out.in_features,
-                        num_heads=attn_block.num_heads,
+                        hidden_size=hidden_size,
+                        num_heads=num_heads,
                         window_size=8
                     )
                     attn_block.set_processor(attn_processor)
@@ -49,12 +53,16 @@ class MixedAttentionUNetWrapper:
         for i, block in enumerate(self.model.up_blocks):
             if hasattr(block, 'attentions'):
                 for j, attn_block in enumerate(block.attentions):
+                    # 获取隐藏维度大小
+                    hidden_size = attn_block.to_q.out_features
+                    num_heads = attn_block.heads
+                    
                     # 应用轴注意力到后半部分上采样块
                     attn_processor = get_attention_processor_for_block(
                         block_idx=up_blocks_count - i - 1,  # 反向索引
                         total_blocks=up_blocks_count,
-                        hidden_size=attn_block.proj_out.in_features,
-                        num_heads=attn_block.num_heads,
+                        hidden_size=hidden_size,
+                        num_heads=num_heads,
                         window_size=8
                     )
                     attn_block.set_processor(attn_processor)
@@ -62,10 +70,14 @@ class MixedAttentionUNetWrapper:
         # 应用到中间块
         if hasattr(self.model.mid_block, 'attentions'):
             for attn_block in self.model.mid_block.attentions:
+                # 获取隐藏维度大小
+                hidden_size = attn_block.to_q.out_features
+                num_heads = attn_block.heads
+                
                 # 中间块使用轴分解注意力
                 attn_processor = MixedAttentionProcessor(
-                    hidden_size=attn_block.proj_out.in_features,
-                    num_attention_heads=attn_block.num_heads,
+                    hidden_size=hidden_size,
+                    num_attention_heads=num_heads,
                     attention_type="axial"
                 )
                 attn_block.set_processor(attn_processor)
