@@ -20,7 +20,7 @@ except ImportError as e:
         raise e
 
 from dataset import get_dataloaders
-from ldm.models.unet import create_unet_model
+from ldm.models.mixed_attention_unet import create_mixed_attention_unet
 from ldm.trainers.ldm_trainer import LDMTrainer
 from ldm.utils.config import parse_args
 
@@ -52,8 +52,12 @@ def train_ldm(args):
     # 计算潜在空间大小
     latent_size = args.image_size // (2 ** (len(vq_model.config.down_block_types)))
     
-    # 创建UNet模型
-    model = create_unet_model(latent_size, args.latent_channels)
+    # 创建混合注意力UNet模型
+    model = create_mixed_attention_unet(
+        latent_size=latent_size, 
+        latent_channels=args.latent_channels,
+        window_size=8
+    )
     
     # 创建LDM训练器
     trainer = LDMTrainer(
