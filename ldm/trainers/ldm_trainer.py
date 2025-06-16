@@ -106,7 +106,7 @@ class LDMTrainer:
         else:
             num_training_steps = args.num_train_steps
             
-        num_warmup_steps = min(1000, int(0.1 * num_training_steps))  # 预热步数为总步数的10%，最多1000步
+        num_warmup_steps = 2000  # 固定预热步数为2000步
         
         print(f"设置学习率调度器 - 总训练步数: {num_training_steps}, 预热步数: {num_warmup_steps}")
         self.lr_scheduler = get_cosine_schedule_with_warmup(
