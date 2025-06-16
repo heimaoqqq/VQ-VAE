@@ -174,6 +174,11 @@ class MixedAttentionProcessor(nn.Module):
         else:
             raise ValueError(f"注意力类型 {attention_type} 不支持。请选择 'window' 或 'axial'")
     
+    def to(self, device):
+        """将注意力层移动到指定设备"""
+        self.attention = self.attention.to(device)
+        return self
+    
     def __call__(self, attn_output, hidden_states, encoder_hidden_states=None, attention_mask=None, temb=None, **kwargs):
         """
         处理来自diffusers注意力层的输入

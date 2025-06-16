@@ -97,6 +97,29 @@ class MixedAttentionUNetWrapper:
     def to(self, *args, **kwargs):
         """委托给原始模型的to方法"""
         self.model = self.model.to(*args, **kwargs)
+        
+        # 同时确保注意力处理器也转移到正确的设备
+        device = args[0] if args else kwargs.get('device')
+        
+        if device:
+            # 遍历所有块，确保注意力处理器移动到正确设备
+            for block in self.model.down_blocks:
+                if hasattr(block, 'attentions'):
+                    for attn_block in block.attentions:
+                        if hasattr(attn_block, 'processor') and hasattr(attn_block.processor, 'attention'):
+                            attn_block.processor.attention = attn_block.processor.attention.to(device)
+            
+            for block in self.model.up_blocks:
+                if hasattr(block, 'attentions'):
+                    for attn_block in block.attentions:
+                        if hasattr(attn_block, 'processor') and hasattr(attn_block.processor, 'attention'):
+                            attn_block.processor.attention = attn_block.processor.attention.to(device)
+            
+            if hasattr(self.model.mid_block, 'attentions'):
+                for attn_block in self.model.mid_block.attentions:
+                    if hasattr(attn_block, 'processor') and hasattr(attn_block.processor, 'attention'):
+                        attn_block.processor.attention = attn_block.processor.attention.to(device)
+        
         return self
     
     def eval(self):
