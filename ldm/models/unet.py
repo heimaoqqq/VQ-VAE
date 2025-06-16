@@ -17,22 +17,22 @@ def create_unet_model(latent_size, latent_channels=4):
     """
     print(f"潜在空间分辨率: {latent_size}x{latent_size}")
     
-    # 根据潜在空间大小调整UNet参数 (全覆盖自注意力版本)
+    # 根据潜在空间大小调整UNet参数 (标准扩散模型配置)
     if latent_size >= 32:  # 较大的潜在空间
-        block_out_channels = (192, 384, 512, 640)  # 优化的四层结构，减少高层通道数以节省显存
+        block_out_channels = (256, 512, 768, 1024)  # 标准扩散模型通道配置
         layers_per_block = 2
         # 全覆盖注意力机制，所有层都加入注意力块
         down_block_types = ("AttnDownBlock2D", "AttnDownBlock2D", "AttnDownBlock2D", "AttnDownBlock2D")
         up_block_types = ("AttnUpBlock2D", "AttnUpBlock2D", "AttnUpBlock2D", "AttnUpBlock2D")
     else:  # 较小的潜在空间
-        block_out_channels = (192, 384, 512)  # 优化的三层结构
+        block_out_channels = (256, 512, 768)  # 标准三层结构
         layers_per_block = 2
         # 全覆盖注意力机制，所有层都加入注意力块
         down_block_types = ("AttnDownBlock2D", "AttnDownBlock2D", "AttnDownBlock2D")
         up_block_types = ("AttnUpBlock2D", "AttnUpBlock2D", "AttnUpBlock2D")
     
-    # 增强注意力头数到12，提升注意力机制表达能力
-    attention_head_dim = 12
+    # 增强注意力头数到16，提升注意力机制表达能力
+    attention_head_dim = 16
     
     print(f"模型结构: 下采样块={down_block_types}, 上采样块={up_block_types}")
     print(f"注意力头数: {attention_head_dim}")
