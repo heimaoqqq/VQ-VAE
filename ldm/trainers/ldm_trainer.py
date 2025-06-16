@@ -10,6 +10,7 @@ from torch.optim import AdamW
 from accelerate import Accelerator
 from diffusers import DDPMScheduler, DDIMScheduler, PNDMScheduler
 import wandb
+from transformers import get_cosine_schedule_with_warmup  # 添加学习率调度器
 
 from ..utils.visualization import save_generated_images
 from ..utils.training import validate
@@ -47,11 +48,14 @@ class LDMTrainer:
         self.images_dir = os.path.join(self.output_dir, "generated_images")
         os.makedirs(self.images_dir, exist_ok=True)
         
-        # 初始化accelerator
+        # 初始化accelerator，启用梯度累积
+        gradient_accumulation_steps = args.gradient_accumulation_steps if hasattr(args, 'gradient_accumulation_steps') else 4
+        print(f"启用梯度累积，累积步数: {gradient_accumulation_steps}")
+        
         self.accelerator = Accelerator(
             mixed_precision=args.mixed_precision,
             log_with="wandb" if args.use_wandb else None,
-            gradient_accumulation_steps=1,
+            gradient_accumulation_steps=gradient_accumulation_steps,
         )
         
         # 初始化噪声调度器
@@ -94,6 +98,21 @@ class LDMTrainer:
             lr=args.lr,
             betas=(0.9, 0.999),
             weight_decay=1e-5 
+        )
+        
+        # 添加学习率调度器
+        if args.num_train_steps is None:
+            num_training_steps = args.epochs * len(train_dataloader)
+        else:
+            num_training_steps = args.num_train_steps
+            
+        num_warmup_steps = min(1000, int(0.1 * num_training_steps))  # 预热步数为总步数的10%，最多1000步
+        
+        print(f"设置学习率调度器 - 总训练步数: {num_training_steps}, 预热步数: {num_warmup_steps}")
+        self.lr_scheduler = get_cosine_schedule_with_warmup(
+            self.optimizer,
+            num_warmup_steps=num_warmup_steps,
+            num_training_steps=num_training_steps
         )
         
         # 使用accelerator准备模型和数据加载器
@@ -198,6 +217,7 @@ class LDMTrainer:
                         self.accelerator.clip_grad_norm_(self.unet.parameters(), 1.0)
                     
                     self.optimizer.step()
+                    self.lr_scheduler.step()  # 更新学习率
                     self.optimizer.zero_grad()
                 
                 epoch_loss += loss.detach().item()

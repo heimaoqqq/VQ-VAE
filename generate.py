@@ -20,7 +20,7 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=4, help="批次大小")
     parser.add_argument("--num_samples", type=int, default=16, help="生成样本数量")
     parser.add_argument("--image_size", type=int, default=256, help="图像尺寸")
-    parser.add_argument("--num_inference_steps", type=int, default=1000, help="推理步数")
+    parser.add_argument("--num_inference_steps", type=int, default=50, help="推理步数，DDIM默认50步已足够")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="设备")
     parser.add_argument("--seed", type=int, default=42, help="随机种子")
     parser.add_argument("--grid", action="store_true", help="是否生成网格图像")
@@ -67,7 +67,7 @@ def generate_images(args):
                 scheduler = PNDMScheduler.from_pretrained(args.ldm_path)
                 print("使用PNDM采样器")
             else:
-            scheduler = DDPMScheduler.from_pretrained(args.ldm_path)
+                scheduler = DDPMScheduler.from_pretrained(args.ldm_path)
                 print("使用DDPM采样器")
         except Exception as e:
             print(f"无法加载特定调度器: {e}，使用默认配置")
@@ -79,7 +79,7 @@ def generate_images(args):
                 from diffusers import PNDMScheduler
                 scheduler = PNDMScheduler(num_train_timesteps=1000)
             else:
-            scheduler = DDPMScheduler(num_train_timesteps=1000)
+                scheduler = DDPMScheduler(num_train_timesteps=1000)
         
         # 尝试不同的路径加载UNet
         possible_unet_paths = [

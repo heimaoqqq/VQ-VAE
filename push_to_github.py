@@ -18,7 +18,7 @@ def push_to_github():
         return False
     
     # 提交更改
-    commit_message = "修复autocast兼容性问题: 添加对新旧PyTorch版本的自适应支持"
+    commit_message = "优化扩散模型结构: 改进注意力机制和显存效率，适配16GB显存限制"
     if not run_command(f'git commit -m "{commit_message}"'):
         print("提交更改失败")
         return False
