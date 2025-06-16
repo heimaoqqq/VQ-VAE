@@ -46,9 +46,7 @@ def create_unet_model(latent_size, latent_channels=4):
         down_block_types=down_block_types,  # 下采样块类型，添加增强的注意力
         up_block_types=up_block_types,  # 上采样块类型，添加增强的注意力
         attention_head_dim=attention_head_dim,  # 设置8头自注意力
-        use_memory_efficient_attention=True,  # 使用内存高效的注意力实现
     )
     print(f"通道配置: {block_out_channels}")
     print(f"注意力分布: 下采样={down_block_types}, 上采样={up_block_types}")
-    print(f"启用内存高效注意力: True")
     return model
