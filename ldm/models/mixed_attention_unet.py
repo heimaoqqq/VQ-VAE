@@ -139,6 +139,34 @@ class MixedAttentionUNetWrapper:
         
         return self
     
+    @property
+    def config(self):
+        """访问内部模型的配置"""
+        return self.model.config
+    
+    # 添加其他可能需要的属性访问方法
+    @property
+    def in_channels(self):
+        """访问内部模型的输入通道数"""
+        return self.model.in_channels
+        
+    @property
+    def dtype(self):
+        """访问内部模型的数据类型"""
+        return self.model.dtype
+        
+    @property
+    def device(self):
+        """访问内部模型的设备"""
+        return self.model.device
+    
+    def __getattr__(self, name):
+        """对于未定义的属性，尝试从内部模型获取"""
+        try:
+            return getattr(self.model, name)
+        except AttributeError:
+            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+    
     def eval(self):
         """委托给原始模型的eval方法"""
         self.model.eval()
