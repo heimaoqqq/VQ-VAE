@@ -212,9 +212,11 @@ class LDMTrainer:
                     # 反向传播
                     self.accelerator.backward(loss)
                     
-                    # 梯度裁剪
-                    if hasattr(self.accelerator, "clip_grad_norm_"):
-                        self.accelerator.clip_grad_norm_(self.unet.parameters(), 1.0)
+                    # 只在梯度累积完成时进行梯度裁剪和优化器步骤
+                    # 这种方式可以避免梯度反缩放(unscale)被多次调用的错误
+                    if self.accelerator.sync_gradients:
+                        if hasattr(self.accelerator, "clip_grad_norm_"):
+                            self.accelerator.clip_grad_norm_(self.unet.parameters(), 1.0)
                     
                     self.optimizer.step()
                     self.lr_scheduler.step()  # 更新学习率
