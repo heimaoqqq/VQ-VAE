@@ -33,7 +33,7 @@ class CustomVQGAN(nn.Module):
 
         # Vector Quantizer
         self.quantize = VectorQuantizer(
-            num_vq_embeddings=num_vq_embeddings,
+            num_embeddings=num_vq_embeddings,
             embedding_dim=vq_embed_dim,
             commitment_cost=0.25,
         )
