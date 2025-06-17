@@ -153,7 +153,7 @@ def main(config):
         save_image(comparison.cpu(), os.path.join(samples_dir, f"recon_epoch_{epoch+1}.png"), nrow=8)
 
         # Save model checkpoint if it's the best one on the validation set
-        current_val_recon_loss = val_metrics["val_recon_loss"] / len(val_loader)
+        current_val_recon_loss = val_metrics["V_Rec"] / len(val_loader)
         if current_val_recon_loss < best_val_recon_loss:
             best_val_recon_loss = current_val_recon_loss
             checkpoint_path = os.path.join(checkpoints_dir, "best_model.pt")

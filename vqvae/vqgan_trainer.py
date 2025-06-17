@@ -108,15 +108,15 @@ class VQGANTrainer:
         # 3. Compile and return metrics (as float32)
         # ====================================================
         return {
-            "g_loss": g_loss.item(),
-            "d_loss": d_loss.item(),
-            "recon_loss": recon_loss.item(),
-            "adv_g_loss": g_loss_adv.item(),
-            "commitment_loss": commitment_loss.item(),
-            "perplexity": perplexity_item,
-            "d_loss_real": d_loss_real.item(),
-            "d_loss_fake": d_loss_fake.item(),
-            "gradient_penalty": gradient_penalty.item(),
+            "G": g_loss.item(),
+            "D": d_loss.item(),
+            "Rec": recon_loss.item(),
+            "Adv": g_loss_adv.item(),
+            "Commit": commitment_loss.item(),
+            "Perp": perplexity_item,
+            "D_real": d_loss_real.item(),
+            "D_fake": d_loss_fake.item(),
+            "GP": gradient_penalty.item(),
         }
 
     @torch.no_grad()
