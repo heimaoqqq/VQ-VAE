@@ -78,7 +78,8 @@ class LDMTrainer:
             # 默认使用DDIM + squaredcos_cap_v2
             self.noise_scheduler = DDIMScheduler(
                 num_train_timesteps=1000,
-                beta_schedule=beta_schedule
+                beta_schedule=beta_schedule,
+                prediction_type="v_prediction"  # 明确指定预测类型为v_prediction
             )
         
         # 计算潜在空间大小
