@@ -27,11 +27,15 @@ class VQGANTrainer:
         # ----- 训练生成器 (VQ-VAE) -----
         self.vq_optimizer.zero_grad()
         
-        # 重建图像 - 正确处理模型输出
-        vq_output = self.vq_model(images)
-        reconstructed = vq_output.sample
-        vq_embed_loss = vq_output.vq_loss
-        perplexity = vq_output.perplexity
+        # 重建图像 - 显式调用encode和decode以获取所有输出
+        encoder_output = self.vq_model.encode(images)
+        latents = encoder_output.latents
+        reconstructed_output = self.vq_model.decode(latents)
+        reconstructed = reconstructed_output.sample
+        
+        # 从编码器输出中获取VQ损失和perplexity
+        vq_embed_loss = encoder_output.vq_loss
+        perplexity = encoder_output.perplexity
         
         # 计算重建损失
         recon_loss = F.l1_loss(reconstructed, images)
