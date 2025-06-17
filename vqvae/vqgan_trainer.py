@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as F
 from lpips import LPIPS
 from accelerate import Accelerator
+from torch.cuda.amp import autocast
 
 from .models import PerceptualLoss
 
@@ -47,42 +48,33 @@ class VQGANTrainer:
         gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
         return gradient_penalty
 
-    def train_step(self, images):
-        # ====================================================
-        # Manual VQ-GAN forward pass to extract perplexity
-        # ====================================================
-        h = self.vqgan.encoder(images)
-        h = self.vqgan.quant_conv(h)
-        # The 'quantize' method in diffusers' VQModel returns:
-        # (quant_states, vq_loss_dict, info) where vq_loss_dict is not used here but vq_loss is inside.
-        # The vq_loss that VQModel's forward returns is the commitment loss.
-        # We need the full output from quantize.
-        quant_states, commitment_loss, vq_info = self.vqgan.quantize(h)
-        recon_images = self.vqgan.decode(quant_states).sample
-
-        perplexity = vq_info[1]
-        perplexity_item = perplexity.item() if perplexity is not None else -1.0
-        
+    def train_step(self, images, scaler_g, scaler_d):
         # ====================================================
         # 1. Train the Discriminator
         # ====================================================
         self.discriminator.train()
         self.optimizer_d.zero_grad()
 
-        # Judge fake images
-        d_loss_fake = self.discriminator(recon_images.detach()).mean()
-
-        # Judge real images
-        d_loss_real = self.discriminator(images.detach()).mean()
+        with autocast():
+            # Generate fake images first to be used in both D and G training
+            h = self.vqgan.encoder(images)
+            h = self.vqgan.quant_conv(h)
+            quant_states, commitment_loss, vq_info = self.vqgan.quantize(h)
+            recon_images = self.vqgan.decode(quant_states).sample
+            
+            # Judge fake images
+            d_loss_fake = self.discriminator(recon_images.detach()).mean()
+            # Judge real images
+            d_loss_real = self.discriminator(images.detach()).mean()
+            # Calculate Gradient Penalty
+            gradient_penalty = self.compute_gradient_penalty(images.data, recon_images.data)
+            # Total Discriminator Loss
+            d_loss = d_loss_fake - d_loss_real + self.gp_weight * gradient_penalty
         
-        # Calculate Gradient Penalty
-        gradient_penalty = self.compute_gradient_penalty(images.data, recon_images.data)
-        
-        # Total Discriminator Loss with Gradient Penalty
-        d_loss = d_loss_fake - d_loss_real + self.gp_weight * gradient_penalty
-        
-        d_loss.backward()
-        self.optimizer_d.step()
+        # Scale and backpropagate for Discriminator
+        scaler_d.scale(d_loss).backward()
+        scaler_d.step(self.optimizer_d)
+        scaler_d.update()
 
         # ====================================================
         # 2. Train the Generator (VQ-GAN)
@@ -90,22 +82,30 @@ class VQGANTrainer:
         self.vqgan.train()
         self.optimizer_g.zero_grad()
 
-        # Reconstruction and Perceptual Loss
-        recon_loss_l1 = F.l1_loss(recon_images, images)
-        recon_loss_perceptual = self.perceptual_loss(recon_images, images)
-        recon_loss = recon_loss_l1 + recon_loss_perceptual
+        # We need perplexity for logging, but don't need its gradient
+        with torch.no_grad():
+            perplexity = vq_info[1]
+            perplexity_item = perplexity.item() if perplexity is not None else -1.0
+        
+        with autocast():
+            # Adversarial Loss (Generator's goal is to fool the discriminator)
+            g_loss_adv = -self.discriminator(recon_images).mean()
+            
+            # Reconstruction and Perceptual Loss
+            recon_loss_l1 = F.l1_loss(recon_images, images)
+            recon_loss_perceptual = self.perceptual_loss(recon_images, images)
+            recon_loss = recon_loss_l1 + recon_loss_perceptual
 
-        # Adversarial Loss (Generator's goal is to fool the discriminator)
-        g_loss_adv = -self.discriminator(recon_images).mean()
-
-        # Total Generator Loss
-        g_loss = recon_loss + self.adv_weight * g_loss_adv + self.commitment_weight * commitment_loss
-
-        g_loss.backward()
-        self.optimizer_g.step()
+            # Total Generator Loss
+            g_loss = recon_loss + self.adv_weight * g_loss_adv + self.commitment_weight * commitment_loss
+        
+        # Scale and backpropagate for Generator
+        scaler_g.scale(g_loss).backward()
+        scaler_g.step(self.optimizer_g)
+        scaler_g.update()
         
         # ====================================================
-        # 3. Compile and return metrics
+        # 3. Compile and return metrics (as float32)
         # ====================================================
         return {
             "g_loss": g_loss.item(),
@@ -123,29 +123,21 @@ class VQGANTrainer:
     def validate_step(self, images):
         self.vqgan.eval()
         
-        h = self.vqgan.encoder(images)
-        h = self.vqgan.quant_conv(h)
-        # The 'quantize' method in diffusers' VQModel returns:
-        # (quant_states, vq_loss_dict, info) where vq_loss_dict is not used here but vq_loss is inside.
-        # The vq_loss that VQModel's forward returns is the commitment loss.
-        # We need the full output from quantize.
-        quant_states, commitment_loss, vq_info = self.vqgan.quantize(h)
-        recon_images = self.vqgan.decode(quant_states).sample
+        with autocast():
+            h = self.vqgan.encoder(images)
+            h = self.vqgan.quant_conv(h)
+            quant_states, commitment_loss, vq_info = self.vqgan.quantize(h)
+            recon_images = self.vqgan.decode(quant_states).sample
 
-        perplexity = vq_info[1]
-        perplexity_item = perplexity.item() if perplexity is not None else -1.0
+            perplexity = vq_info[1]
+            perplexity_item = perplexity.item() if perplexity is not None else -1.0
 
-        recon_loss_l1 = F.l1_loss(recon_images, images)
-        recon_loss_perceptual = self.perceptual_loss(recon_images, images)
-        recon_loss = recon_loss_l1 + recon_loss_perceptual
+            recon_loss_l1 = F.l1_loss(recon_images, images)
+            recon_loss_perceptual = self.perceptual_loss(recon_images, images)
+            recon_loss = recon_loss_l1 + recon_loss_perceptual
         
         return {
             "val_recon_loss": recon_loss.item(),
             "val_commitment_loss": commitment_loss.item(),
             "val_perplexity": perplexity_item
-        }
-
-    def train_step_fp16(self, images, vq_scaler, disc_scaler):
-        # FP16的实现相对复杂，此处暂时留空
-        # 推荐在验证GAN训练稳定后再实现
-        raise NotImplementedError("FP16 training for VQ-GAN is not implemented yet.") 
+        } 

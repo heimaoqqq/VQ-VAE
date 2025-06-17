@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader, random_split
 from torchvision.utils import save_image
 from tqdm import tqdm
 import collections
+from torch.cuda.amp import GradScaler, autocast
 
 from diffusers import VQModel
 from vqvae.discriminator import Discriminator
@@ -21,6 +22,7 @@ def main(config):
     # Setup device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
+    use_amp = device.type == 'cuda'
 
     # Create dataset and dataloaders
     dataset = MicroDopplerDataset(config.data_path, image_size=config.image_size)
@@ -75,6 +77,10 @@ def main(config):
         device=device
     )
 
+    # AMP Grad Scalers
+    scaler_g = GradScaler(enabled=use_amp)
+    scaler_d = GradScaler(enabled=use_amp)
+
     # Create output directories
     os.makedirs(config.output_dir, exist_ok=True)
     checkpoints_dir = os.path.join(config.output_dir, "checkpoints")
@@ -101,7 +107,7 @@ def main(config):
         progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{config.num_epochs} [Train]")
         for i, (images, _) in enumerate(progress_bar):
             images = images.to(device)
-            metrics_dict = trainer.train_step(images)
+            metrics_dict = trainer.train_step(images, scaler_g, scaler_d)
             
             for k, v in metrics_dict.items():
                 train_metrics[k] += v
@@ -121,7 +127,8 @@ def main(config):
         with torch.no_grad():
             for i, (images, _) in enumerate(val_progress_bar):
                 images = images.to(device)
-                metrics_dict = trainer.validate_step(images)
+                with autocast(enabled=use_amp):
+                    metrics_dict = trainer.validate_step(images)
 
                 for k, v in metrics_dict.items():
                     val_metrics[k] += v
@@ -139,7 +146,8 @@ def main(config):
 
         # Save a sample of reconstructed images from the fixed validation batch
         with torch.no_grad():
-            recon_images = vq_model(fixed_val_images).sample
+            with autocast(enabled=use_amp):
+                recon_images = vq_model(fixed_val_images).sample
         
         comparison = torch.cat([fixed_val_images[:8], recon_images[:8]])
         save_image(comparison.cpu(), os.path.join(samples_dir, f"recon_epoch_{epoch+1}.png"), nrow=8)
