@@ -15,7 +15,7 @@ from diffusers import VQModel
 from vqvae.discriminator import Discriminator
 from vqvae.models.losses import PerceptualLoss
 from vqvae.vqgan_trainer import VQGANTrainer
-from dataset import create_dataset
+from dataset import MicroDopplerDataset
 
 def main(config):
     # Setup device
@@ -23,7 +23,7 @@ def main(config):
     print(f"Using device: {device}")
 
     # Create dataset and dataloaders
-    dataset = create_dataset(config.data_path, image_size=config.image_size)
+    dataset = MicroDopplerDataset(config.data_path, image_size=config.image_size)
     
     # Split dataset into training and validation
     # Use a fixed generator for reproducibility
