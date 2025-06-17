@@ -5,7 +5,7 @@
 import torch
 import torch.nn as nn
 
-class PatchGANDiscriminator(nn.Module):
+class Discriminator(nn.Module):
     """
     一个简单的PatchGAN判别器.
     将输入图像映射到一个N x N的patch网格, 每个patch的值代表其为'真'的概率.
