@@ -49,7 +49,7 @@ def main(config):
     # Create VQ-GAN model (Generator part)
     print("Setting up models...")
     vq_model = create_vq_model(config).to(device)
-    discriminator = PatchGANDiscriminator(in_channels=config.in_channels).to(device)
+    discriminator = PatchGANDiscriminator(input_channels=config.in_channels).to(device)
 
     # Optimizers for Generator (VQ-Model) and Discriminator
     optimizer_g = torch.optim.Adam(vq_model.parameters(), lr=config.lr, betas=(0.5, 0.9))
