@@ -40,10 +40,14 @@ class VQGANTrainer:
 
     def _get_vq_output(self, real_imgs):
         with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
-            h = self.vqvae.encoder(real_imgs)
-            h = self.vqvae.quant_conv(h)
-            quantized, commitment_loss, perplexity = self.vqvae.quantize(h)
-            decoded_imgs = self.vqvae.decoder(self.vqvae.post_quant_conv(quantized))
+            # Use the official .encode() and .decode() methods for stability
+            encoder_output = self.vqvae.encode(real_imgs)
+            quantized = encoder_output.latents
+            commitment_loss = encoder_output.commitment_loss
+            perplexity = encoder_output.perplexity
+            
+            decoded_imgs = self.vqvae.decode(quantized)
+            
         return decoded_imgs, commitment_loss, perplexity
 
     def _train_batch(self, batch):
