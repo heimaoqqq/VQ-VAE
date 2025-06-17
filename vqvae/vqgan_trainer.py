@@ -43,7 +43,7 @@ class VQGANTrainer:
             # Manually perform the forward pass to access the commitment loss from the quantizer
             h = self.vqvae.encoder(real_imgs)
             h = self.vqvae.quant_conv(h)
-            quant, commitment_loss, _ = self.vqvae.quantize(h)
+            quant, commitment_loss, (_, _, indices) = self.vqvae.quantize(h)
             decoded_imgs = self.vqvae.decoder(self.vqvae.post_quant_conv(quant))
 
             l1_loss = F.l1_loss(decoded_imgs, real_imgs)
@@ -98,6 +98,7 @@ class VQGANTrainer:
             'D_real': d_loss_real.item(),
             'D_fake': d_loss_fake.item(),
             'GP': gradient_penalty.item(),
+            'indices': indices
         }
 
     def _validate_batch(self, batch):
@@ -106,7 +107,7 @@ class VQGANTrainer:
             # Manually perform the forward pass to access the commitment loss from the quantizer
             h = self.vqvae.encoder(real_imgs)
             h = self.vqvae.quant_conv(h)
-            quant, commitment_loss, _ = self.vqvae.quantize(h)
+            quant, commitment_loss, (_, _, indices) = self.vqvae.quantize(h)
             decoded_imgs = self.vqvae.decoder(self.vqvae.post_quant_conv(quant))
 
             l1_loss = F.l1_loss(decoded_imgs, real_imgs)
@@ -116,13 +117,16 @@ class VQGANTrainer:
             'L1': l1_loss.item(),
             'Perceptual': perceptual_loss.item(),
             'Commit': commitment_loss.item(),
-            'Adv': 0, 'D': 0, 'D_real': 0, 'D_fake': 0, 'GP': 0, # GAN metrics are not relevant for validation
+            'indices': indices,
+            # GAN metrics are not relevant for validation, but returning a consistent structure is good
+            # 'Adv': 0, 'D': 0, 'D_real': 0, 'D_fake': 0, 'GP': 0,
         }
 
     def _get_short_metric_names(self):
         return {
             'L1': 'L1', 'Perceptual': 'Perc', 'Adv': 'G_adv', 'Commit': 'Commit',
-            'D': 'D_loss', 'D_real': 'D_r', 'D_fake': 'D_f', 'GP': 'GP'
+            'D': 'D_loss', 'D_real': 'D_r', 'D_fake': 'D_f', 'GP': 'GP',
+            'CodebookUsage': 'Usage(%)'
         }
 
     def _format_metrics(self, metrics, short_names=False):
@@ -132,7 +136,11 @@ class VQGANTrainer:
             if val == 0 and key in ['Adv', 'D', 'D_real', 'D_fake', 'GP']: # Don't show GAN metrics in validation summary
                 continue
             name = name_map.get(key, key)
-            log_str.append(f"{name}={val:.4f}")
+            # Format usage as percentage with 2 decimal points
+            if key == 'CodebookUsage':
+                log_str.append(f"{name}={val:.2f}")
+            else:
+                log_str.append(f"{name}={val:.4f}")
         return ', '.join(log_str)
 
     def _run_epoch(self, dataloader, is_train, epoch, num_epochs):
@@ -141,6 +149,7 @@ class VQGANTrainer:
         self.discriminator.train(is_train)
         
         epoch_metrics = {}
+        used_indices = set()
         progress_bar = tqdm(dataloader, desc=f"Epoch {epoch}/{num_epochs} [{phase}]", leave=False)
 
         for images, _ in progress_bar:
@@ -152,16 +161,37 @@ class VQGANTrainer:
                 with torch.no_grad():
                     batch_metrics = self._validate_batch(images)
             
+            # Update used indices and remove from metrics dict to prevent aggregation
+            used_indices.update(torch.unique(batch_metrics.pop('indices')).tolist())
+            
             for key, val in batch_metrics.items():
                 epoch_metrics[key] = epoch_metrics.get(key, 0) + val
 
             progress_bar.set_postfix_str(self._format_metrics(batch_metrics, short_names=True))
         
         avg_metrics = {key: val / len(dataloader) for key, val in epoch_metrics.items()}
+        
+        # Calculate and add codebook usage to the summary
+        codebook_usage = (len(used_indices) / self.vqvae.num_vq_embeddings) * 100
+        avg_metrics['CodebookUsage'] = codebook_usage
+        
         return avg_metrics
 
     def _log_epoch_summary(self, epoch, num_epochs, avg_metrics, phase):
-        print(f"Epoch {epoch}/{num_epochs} [{phase}] Summary: {self._format_metrics(avg_metrics)}")
+        # For validation, we don't have GAN metrics. Create a clean dict for logging.
+        if phase == "Validation":
+            val_summary_metrics = {
+                'L1': avg_metrics.get('L1', 0),
+                'Perceptual': avg_metrics.get('Perceptual', 0),
+                'Commit': avg_metrics.get('Commit', 0),
+                'CodebookUsage': avg_metrics.get('CodebookUsage', 0),
+            }
+            log_message = f"Epoch {epoch}/{num_epochs} [{phase}] Summary: {self._format_metrics(val_summary_metrics)}"
+            print(log_message)
+            # Here you could also log to wandb if you use it
+        else:
+            log_message = f"Epoch {epoch}/{num_epochs} [{phase}] Summary: {self._format_metrics(avg_metrics)}"
+            print(log_message)
 
     def train(self, train_loader, val_loader, epochs):
         self.load_checkpoint()
