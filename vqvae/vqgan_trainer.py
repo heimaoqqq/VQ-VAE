@@ -27,14 +27,17 @@ class VQGANTrainer:
         # ----- 训练生成器 (VQ-VAE) -----
         self.vq_optimizer.zero_grad()
         
-        # 重建图像
-        reconstructed, vq_loss_dict = self.vq_model(images)
+        # 重建图像 - 正确处理模型输出
+        vq_output = self.vq_model(images)
+        reconstructed = vq_output.sample
+        vq_embed_loss = vq_output.vq_loss
+        perplexity = vq_output.perplexity
         
         # 计算重建损失
         recon_loss = F.l1_loss(reconstructed, images)
         
         # 计算感知损失
-        perceptual_loss = self.perceptual_loss(reconstructed, images) if self.perceptual_loss else torch.tensor(0.0)
+        perceptual_loss = self.perceptual_loss(reconstructed, images) if self.perceptual_loss else torch.tensor(0.0, device=self.device)
         
         # 计算对抗损失 (生成器部分)
         fake_logits = self.discriminator(reconstructed)
@@ -43,7 +46,7 @@ class VQGANTrainer:
         
         # VQ-VAE的总损失
         vq_loss = recon_loss + \
-                  vq_loss_dict['loss'] + \
+                  vq_embed_loss + \
                   self.lambda_perceptual * perceptual_loss + \
                   self.gan_loss_weight * g_loss
                   
@@ -89,10 +92,10 @@ class VQGANTrainer:
         results = {
             'total_vq_loss': vq_loss.item(),
             'recon_loss': recon_loss.item(),
-            'vq_embed_loss': vq_loss_dict['loss'].item(),
+            'vq_embed_loss': vq_embed_loss.item(),
             'g_loss': g_loss.item(),
             'd_loss': disc_loss.item(),
-            'perplexity': vq_loss_dict['perplexity'].item()
+            'perplexity': perplexity.item()
         }
         if self.perceptual_loss:
             results['perceptual_loss'] = perceptual_loss.item()
