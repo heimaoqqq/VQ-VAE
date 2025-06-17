@@ -94,7 +94,7 @@ if __name__ == '__main__':
 
     # Model params
     parser.add_argument('--vq_embed_dim', type=int, default=256, help='Dimension of the codebook embeddings')
-    parser.add_argument('--vq_num_embed', type=int, default=8192, help='Number of codebook embeddings')
+    parser.add_argument('--vq_num_embed', type=int, default=1024, help='Number of codebook embeddings')
     parser.add_argument('--disc_channels', type=int, default=64, help='Initial channels for discriminator')
 
     # Loss weights
