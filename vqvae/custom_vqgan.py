@@ -57,6 +57,13 @@ class CustomVQGAN(nn.Module):
 
     def encode(self, x):
         h = self.encoder(x)
+        
+        # The underlying Encoder class from diffusers seems to be designed for AutoencoderKL
+        # and doubles the output channels (for mean and logvar). We only need the "mean"
+        # part for VQ-GAN, so we split the channels and take the first half.
+        if h.shape[1] == 2 * self.quant_conv.in_channels:
+             h, _ = h.chunk(2, dim=1)
+
         h = self.quant_conv(h)
         return h
 
