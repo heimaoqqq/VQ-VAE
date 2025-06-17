@@ -79,7 +79,7 @@ def train_vqgan(args):
                 init_kwargs={"wandb": {"name": args.wandb_name}}
             )
 
-    train_dataloader, val_dataloader = get_dataloaders(args.data_dir, args.batch_size, args.image_size)
+    train_dataloader, val_dataloader, _ = get_dataloaders(args.data_dir, args.batch_size, args.image_size)
     
     if accelerator.is_main_process:
         print(f"找到 {len(train_dataloader.dataset) + len(val_dataloader.dataset)} 张图像")
