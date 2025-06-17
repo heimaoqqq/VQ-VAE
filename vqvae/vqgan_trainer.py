@@ -46,10 +46,13 @@ class VQGANTrainer:
             h = self.vqvae.quant_conv(h)
             
             # 2. Quantize and get outputs
-            quantized, commit_loss, info = self.vqvae.quantizer(h)
+            quantized, commit_loss, info = self.vqvae.quantize(h)
             
             # 3. Calculate perplexity manually
-            avg_probs = torch.mean(info['code_usage'], dim=0)
+            # Ensure code_usage is on CPU for one_hot and calculations
+            code_usage = info['code_usage'].to('cpu')
+            # Create one-hot vectors and calculate avg_probs
+            avg_probs = torch.mean(code_usage, dim=0)
             perplexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs + 1e-10)))
 
             # 4. Decode

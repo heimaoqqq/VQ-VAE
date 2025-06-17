@@ -16,9 +16,10 @@ from dataset import MicroDopplerDataset
 def create_vq_model(config):
     """
     Creates an Autoencoder with a VQ-quantizer.
-    We are using AutoencoderKL and then manually handling the quantization logic
-    to bypass the environment-specific issues with VQModel.
+    We use AutoencoderKL as a backbone and then manually attach quantizer parts
+    from a dummy VQModel to bypass environment/import issues.
     """
+    # 1. Create the AutoencoderKL backbone
     model = AutoencoderKL(
         in_channels=config.in_channels,
         out_channels=config.out_channels,
@@ -29,14 +30,20 @@ def create_vq_model(config):
         latent_channels=config.latent_channels,
         norm_num_groups=32,
     )
-    # Manually attach a VQ-VAE quantizer to the model
-    from diffusers.models.vq_model import VQEncoder
-    model.quantizer = VQEncoder(
+
+    # 2. Create a dummy VQModel instance to "steal" its quantizer components
+    dummy_vq_model = VQModel(
+        in_channels=config.in_channels,
+        out_channels=config.out_channels,
+        latent_channels=config.latent_channels,
         num_vq_embeddings=config.vq_num_embed,
-        vq_embed_dim=config.latent_channels
+        vq_embed_dim=config.latent_channels,
     )
-    model.quant_conv = torch.nn.Conv2d(config.latent_channels, config.latent_channels, 1)
-    model.post_quant_conv = torch.nn.Conv2d(config.latent_channels, config.latent_channels, 1)
+
+    # 3. Steal the components and attach them to our main model
+    model.quantize = dummy_vq_model.quantize
+    model.quant_conv = dummy_vq_model.quant_conv
+    model.post_quant_conv = dummy_vq_model.post_quant_conv
 
     return model
 
