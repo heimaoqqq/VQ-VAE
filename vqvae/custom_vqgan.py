@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 from diffusers.models.autoencoders.vae import Encoder, Decoder
 from diffusers.models.autoencoders.vq_model import VectorQuantizer
+from dataclasses import dataclass
+from typing import Tuple
 
 class CustomVQGAN(nn.Module):
     def __init__(
@@ -90,4 +92,20 @@ class CustomVQGAN(nn.Module):
             "reconstruction_loss": reconstruction_loss,
             "vq_loss": vq_loss,
             "perplexity": perplexity
-        } 
+        }
+
+@dataclass
+class VQGANConfig:
+    """VQGAN 配置"""
+    in_channels: int = 3
+    out_channels: int = 3
+    down_block_types: Tuple[str] = ("DownEncoderBlock2D", "DownEncoderBlock2D", "DownEncoderBlock2D", "DownEncoderBlock2D")
+    up_block_types: Tuple[str] = ("UpDecoderBlock2D", "UpDecoderBlock2D", "UpDecoderBlock2D", "UpDecoderBlock2D")
+    block_out_channels: Tuple[int] = (128, 256, 256, 512)
+    layers_per_block: int = 2
+    latent_channels: int = 256
+    num_vq_embeddings: int = 1024,
+    vq_embed_dim: int = 256
+    scaling_factor: float = 0.18215
+    # Discriminator
+    # ... existing code ... 
