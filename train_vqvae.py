@@ -50,9 +50,9 @@ def main(config):
 
     # Create Discriminator
     discriminator = Discriminator(
-        in_channels=1,
-        num_layers=3,
-        initial_channels=config.disc_channels,
+        input_channels=1,
+        n_layers=3,
+        n_filters_start=config.disc_channels,
     ).to(device)
 
     # Create Perceptual Loss
