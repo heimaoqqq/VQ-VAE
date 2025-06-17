@@ -22,11 +22,7 @@ class CustomVQGAN(nn.Module):
         self.encoder = Encoder(
             in_channels=in_channels,
             out_channels=latent_channels,
-            down_block_types=[
-                "DownEncoderBlock2D",
-                "DownEncoderBlock2D",
-                "DownEncoderBlock2D",
-            ],
+            down_block_types=["DownEncoderBlock2D"] * len(block_out_channels),
             block_out_channels=block_out_channels,
             layers_per_block=layers_per_block,
         )
@@ -42,11 +38,7 @@ class CustomVQGAN(nn.Module):
         self.decoder = Decoder(
             in_channels=latent_channels,
             out_channels=out_channels,
-            up_block_types=[
-                "UpDecoderBlock2D", 
-                "UpDecoderBlock2D", 
-                "UpDecoderBlock2D"
-            ],
+            up_block_types=["UpDecoderBlock2D"] * len(block_out_channels),
             block_out_channels=block_out_channels,
             layers_per_block=layers_per_block,
         )
@@ -80,7 +72,28 @@ class CustomVQGAN(nn.Module):
         # The VectorQuantizer in this version returns perplexity and other info in a tuple
         # as the third return value. We unpack it and take the first element, which is the
         # actual perplexity tensor.
-        quant_states, vq_loss, perplexity_info = self.quantize(h)
+        quant_output = self.quantize(h)
+
+        # --- DIAGNOSTIC PRINT ---
+        print("\n\n--- VQ-GAN QUANTIZER DIAGNOSTIC ---")
+        try:
+            print(f"Type of quant_output: {type(quant_output)}")
+            if isinstance(quant_output, (list, tuple)):
+                print(f"Length of quant_output: {len(quant_output)}")
+                for i, item in enumerate(quant_output):
+                    print(f"  - Item {i} | Type: {type(item)}")
+                    if torch.is_tensor(item):
+                        print(f"    - Shape: {item.shape}")
+                    elif isinstance(item, (list, tuple)):
+                        print(f"    - Inner Length: {len(item)}")
+                        for j, sub_item in enumerate(item):
+                            print(f"      - Sub-Item {j} | Type: {type(sub_item)}")
+        except Exception as e:
+            print(f"Error during diagnostics: {e}")
+        print("--- END DIAGNOSTIC ---\n\n")
+        # --- END DIAGNOSTIC PRINT ---
+        
+        quant_states, vq_loss, perplexity_info = quant_output
         perplexity = perplexity_info[0]
         
         # 3. Decode
