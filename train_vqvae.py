@@ -93,6 +93,11 @@ def train_vqgan(args):
         print(f"批次大小: {args.batch_size}")
 
     # Create VQ-GAN (Generator)
+    # The 'in_channels_for_down_blocks' argument is added to explicitly define the input channels for each down block.
+    # This can resolve issues in some versions of diffusers where the channel progression is not inferred correctly.
+    # The progression should be: block1_in=64, block2_in=64, block3_in=128
+    in_channels_for_down_blocks = [args.block_out_channels[0]] + list(args.block_out_channels[:-1])
+
     vqgan = VQModel(
         in_channels=args.in_channels,
         out_channels=args.out_channels,
@@ -100,6 +105,7 @@ def train_vqgan(args):
         num_vq_embeddings=args.num_vq_embeddings,
         vq_embed_dim=args.latent_channels,
         block_out_channels=args.block_out_channels,
+        in_channels_for_down_blocks=in_channels_for_down_blocks,
     )
 
     # Create Discriminator
