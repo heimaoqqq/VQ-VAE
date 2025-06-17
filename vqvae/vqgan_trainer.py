@@ -32,14 +32,14 @@ class VQGANTrainer:
             param.requires_grad = False
 
         # AMP Scalers
-        self.g_scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
-        self.d_scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
+        self.g_scaler = torch.amp.GradScaler(enabled=self.use_amp)
+        self.d_scaler = torch.amp.GradScaler(enabled=self.use_amp)
 
     def _train_batch(self, batch):
         real_imgs = batch
         
         # VQVAE forward pass to get reconstructed images and losses
-        with torch.cuda.amp.autocast(enabled=self.use_amp):
+        with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
             decoded_imgs, commitment_loss, _ = self.vqvae(real_imgs)
             l1_loss = F.l1_loss(decoded_imgs, real_imgs)
             perceptual_loss = self.perceptual_loss(decoded_imgs, real_imgs).mean()
@@ -49,7 +49,7 @@ class VQGANTrainer:
         # ====================================================
         self.d_optimizer.zero_grad()
 
-        with torch.cuda.amp.autocast(enabled=self.use_amp):
+        with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
             real_output = self.discriminator(real_imgs)
             d_loss_real = real_output.mean()
             
@@ -72,7 +72,7 @@ class VQGANTrainer:
         # ====================================================
         self.g_optimizer.zero_grad()
 
-        with torch.cuda.amp.autocast(enabled=self.use_amp):
+        with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
             # Adversarial Loss from discriminator's perspective on the new reconstructions
             g_output = self.discriminator(decoded_imgs)
             g_loss_adv = -g_output.mean()
@@ -97,7 +97,7 @@ class VQGANTrainer:
 
     def _validate_batch(self, batch):
         real_imgs = batch
-        with torch.cuda.amp.autocast(enabled=self.use_amp):
+        with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
             decoded_imgs, commitment_loss, _ = self.vqvae(real_imgs)
             l1_loss = F.l1_loss(decoded_imgs, real_imgs)
             perceptual_loss = self.perceptual_loss(decoded_imgs, real_imgs).mean()
@@ -133,14 +133,14 @@ class VQGANTrainer:
         epoch_metrics = {}
         progress_bar = tqdm(dataloader, desc=f"Epoch {epoch}/{num_epochs} [{phase}]", leave=False)
 
-        for batch in progress_bar:
-            batch = batch.to(self.device)
+        for images, _ in progress_bar:
+            images = images.to(self.device)
             
             if is_train:
-                batch_metrics = self._train_batch(batch)
+                batch_metrics = self._train_batch(images)
             else:
                 with torch.no_grad():
-                    batch_metrics = self._validate_batch(batch)
+                    batch_metrics = self._validate_batch(images)
             
             for key, val in batch_metrics.items():
                 epoch_metrics[key] = epoch_metrics.get(key, 0) + val
