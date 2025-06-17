@@ -77,8 +77,11 @@ class CustomVQGAN(nn.Module):
         h = self.encode(x)
         
         # 2. Quantize
-        # The VectorQuantizer returns 3 values: (quantized_latents, loss, perplexity)
-        quant_states, vq_loss, perplexity = self.quantize(h)
+        # The VectorQuantizer in this version returns perplexity and other info in a tuple
+        # as the third return value. We unpack it and take the first element, which is the
+        # actual perplexity tensor.
+        quant_states, vq_loss, perplexity_info = self.quantize(h)
+        perplexity = perplexity_info[0]
         
         # 3. Decode
         reconstructed_x = self.decode(quant_states)
