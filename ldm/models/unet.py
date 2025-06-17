@@ -48,7 +48,7 @@ def create_unet_model(latent_size, latent_channels=4):
             "AttnUpBlock2D",
             "UpBlock2D",
         )
-
+    
     # 标准化注意力头维度
     attention_head_dim = 8
     

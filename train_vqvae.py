@@ -140,6 +140,7 @@ def train_vqgan(args):
                 "Perceptual": f"{results['perceptual_loss']:.3f}",
                 "Adv_G": f"{results['g_loss_adv']:.3f}",
                 "VQ": f"{results['vq_embed_loss']:.3f}",
+                "Perplexity": f"{results['perplexity']:.2f}"
             })
             progress_bar.update(1)
             

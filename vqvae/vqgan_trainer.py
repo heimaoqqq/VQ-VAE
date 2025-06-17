@@ -57,13 +57,12 @@ class VQGANTrainer:
         with self.accelerator.autocast():
             # Perform a full forward pass through the VQGAN to get all necessary outputs
             model_output = self.vqgan(x, return_dict=True)
-            reconstructed_x = model_output.sample
+            reconstructed_x = model_output["sample"]
             
-            # Extract losses from the model output.
-            # The VQModelOutput from diffusers contains the total loss and reconstruction loss.
-            # The total loss is recon_loss + vq_loss (commitment_loss), so we can derive vq_loss.
-            reconstruction_loss = model_output.reconstruction_loss
-            vq_embed_loss = model_output.loss - reconstruction_loss
+            # Extract losses and metrics from the model output.
+            reconstruction_loss = model_output["reconstruction_loss"]
+            vq_embed_loss = model_output["vq_loss"]
+            perplexity = model_output["perplexity"]
 
             # Perceptual loss
             # Make sure input and target are in the expected range for LPIPS ([-1, 1])
@@ -111,7 +110,8 @@ class VQGANTrainer:
             "perceptual_loss": perceptual_loss.item(),
             "g_loss_adv": g_loss_adv.item(),
             "vq_embed_loss": vq_embed_loss.item(),
-            "gradient_penalty": gradient_penalty.item()
+            "gradient_penalty": gradient_penalty.item(),
+            "perplexity": perplexity.item()
         }, reconstructed_x
 
     def train_step_fp16(self, images, vq_scaler, disc_scaler):

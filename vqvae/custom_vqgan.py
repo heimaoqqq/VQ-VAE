@@ -77,27 +77,23 @@ class CustomVQGAN(nn.Module):
         h = self.encode(x)
         
         # 2. Quantize
-        # The VectorQuantizer in this version of diffusers returns 3 values:
-        # (quant_states, loss_tensor, perplexity_tensor). We unpack all three
-        # and ignore the perplexity for now.
-        quant_states, vq_loss, _ = self.quantize(h)
+        # The VectorQuantizer returns 3 values: (quantized_latents, loss, perplexity)
+        quant_states, vq_loss, perplexity = self.quantize(h)
         
         # 3. Decode
         reconstructed_x = self.decode(quant_states)
 
         # 4. Calculate losses
         reconstruction_loss = nn.functional.l1_loss(reconstructed_x, x)
-        # vq_loss is now the direct tensor from the quantizer.
-        
-        # Following diffusers' VQModel, the total loss is recon + vq_loss
         total_loss = reconstruction_loss + vq_loss
 
         if not return_dict:
-            return (reconstructed_x, total_loss)
+            return (reconstructed_x, total_loss, perplexity)
 
         return {
             "sample": reconstructed_x,
             "loss": total_loss,
             "reconstruction_loss": reconstruction_loss,
-            "vq_loss": vq_loss
+            "vq_loss": vq_loss,
+            "perplexity": perplexity
         } 
