@@ -69,32 +69,9 @@ class CustomVQGAN(nn.Module):
         h = self.encode(x)
         
         # 2. Quantize
-        # The VectorQuantizer in this version returns perplexity and other info in a tuple
-        # as the third return value. We unpack it and take the first element, which is the
-        # actual perplexity tensor.
-        quant_output = self.quantize(h)
-
-        # --- DIAGNOSTIC PRINT ---
-        print("\n\n--- VQ-GAN QUANTIZER DIAGNOSTIC ---")
-        try:
-            print(f"Type of quant_output: {type(quant_output)}")
-            if isinstance(quant_output, (list, tuple)):
-                print(f"Length of quant_output: {len(quant_output)}")
-                for i, item in enumerate(quant_output):
-                    print(f"  - Item {i} | Type: {type(item)}")
-                    if torch.is_tensor(item):
-                        print(f"    - Shape: {item.shape}")
-                    elif isinstance(item, (list, tuple)):
-                        print(f"    - Inner Length: {len(item)}")
-                        for j, sub_item in enumerate(item):
-                            print(f"      - Sub-Item {j} | Type: {type(sub_item)}")
-        except Exception as e:
-            print(f"Error during diagnostics: {e}")
-        print("--- END DIAGNOSTIC ---\n\n")
-        # --- END DIAGNOSTIC PRINT ---
-        
-        quant_states, vq_loss, perplexity_info = quant_output
-        perplexity = perplexity_info[0]
+        quant_states, vq_loss, perplexity_info = self.quantize(h)
+        # From diagnostics, we know perplexity is the 3rd item in the inner tuple
+        perplexity = perplexity_info[2]
         
         # 3. Decode
         reconstructed_x = self.decode(quant_states)
