@@ -40,14 +40,22 @@ class VQGANTrainer:
 
     def _get_vq_output(self, real_imgs):
         with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
-            # Final, correct approach: The model's forward pass returns a VQModelOutput object
-            # containing everything we need. This is the most stable API.
-            vq_output = self.vqvae(real_imgs, return_dict=True)
-            decoded_imgs = vq_output.sample
-            commitment_loss = vq_output.commit_loss
-            perplexity = vq_output.perplexity
+            # --- Manual VQ-VAE Logic to bypass environment issues ---
+            # 1. Encode
+            h = self.vqvae.encoder(real_imgs)
+            h = self.vqvae.quant_conv(h)
             
-        return decoded_imgs, commitment_loss, perplexity
+            # 2. Quantize and get outputs
+            quantized, commit_loss, info = self.vqvae.quantizer(h)
+            
+            # 3. Calculate perplexity manually
+            avg_probs = torch.mean(info['code_usage'], dim=0)
+            perplexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs + 1e-10)))
+
+            # 4. Decode
+            decoded_imgs = self.vqvae.decoder(self.vqvae.post_quant_conv(quantized))
+            
+        return decoded_imgs, commit_loss, perplexity
 
     def _train_batch(self, batch):
         real_imgs = batch

@@ -14,19 +14,30 @@ from vqvae.vqgan_trainer import VQGANTrainer
 from dataset import MicroDopplerDataset
 
 def create_vq_model(config):
-    """Creates a VQ-VAE model."""
-    model = VQModel(
+    """
+    Creates an Autoencoder with a VQ-quantizer.
+    We are using AutoencoderKL and then manually handling the quantization logic
+    to bypass the environment-specific issues with VQModel.
+    """
+    model = AutoencoderKL(
         in_channels=config.in_channels,
         out_channels=config.out_channels,
         down_block_types=("DownEncoderBlock2D", "DownEncoderBlock2D", "DownEncoderBlock2D", "DownEncoderBlock2D"),
         up_block_types=("UpDecoderBlock2D", "UpDecoderBlock2D", "UpDecoderBlock2D", "UpDecoderBlock2D"),
         block_out_channels=(128, 256, 512, 512),
         layers_per_block=2,
-        num_vq_embeddings=config.vq_num_embed,
-        vq_embed_dim=256,
+        latent_channels=config.latent_channels,
         norm_num_groups=32,
-        latent_channels=config.latent_channels
     )
+    # Manually attach a VQ-VAE quantizer to the model
+    from diffusers.models.vq_model import VQEncoder
+    model.quantizer = VQEncoder(
+        num_vq_embeddings=config.vq_num_embed,
+        vq_embed_dim=config.latent_channels
+    )
+    model.quant_conv = torch.nn.Conv2d(config.latent_channels, config.latent_channels, 1)
+    model.post_quant_conv = torch.nn.Conv2d(config.latent_channels, config.latent_channels, 1)
+
     return model
 
 def main(config):
