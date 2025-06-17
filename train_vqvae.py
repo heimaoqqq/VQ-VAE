@@ -25,7 +25,7 @@ def create_vq_model(config):
         out_channels=config.out_channels,
         down_block_types=("DownEncoderBlock2D", "DownEncoderBlock2D", "DownEncoderBlock2D", "DownEncoderBlock2D"),
         up_block_types=("UpDecoderBlock2D", "UpDecoderBlock2D", "UpDecoderBlock2D", "UpDecoderBlock2D"),
-        block_out_channels=(128, 256, 512, 512),
+        block_out_channels=(128, 256, 512, config.latent_channels),
         layers_per_block=2,
         latent_channels=config.latent_channels,
         norm_num_groups=32,
