@@ -7,10 +7,27 @@ import torch
 from torch.utils.data import DataLoader, random_split
 from torch.optim.lr_scheduler import StepLR
 
-from diffusers import VQModel
-from vqvae.discriminator import Discriminator
+from diffusers import UNet2DModel, VQModel, AutoencoderKL
+from diffusers.optimization import get_scheduler
+from vqvae.discriminator import PatchGANDiscriminator
 from vqvae.vqgan_trainer import VQGANTrainer
 from dataset import MicroDopplerDataset
+
+def create_vq_model(config):
+    """Creates a VQ-VAE model."""
+    model = VQModel(
+        in_channels=config.in_channels,
+        out_channels=config.out_channels,
+        down_block_types=("DownEncoderBlock2D", "DownEncoderBlock2D", "DownEncoderBlock2D", "DownEncoderBlock2D"),
+        up_block_types=("UpDecoderBlock2D", "UpDecoderBlock2D", "UpDecoderBlock2D", "UpDecoderBlock2D"),
+        block_out_channels=(128, 256, 512, 512),
+        layers_per_block=2,
+        num_vq_embeddings=config.vq_num_embed,
+        vq_embed_dim=256,
+        norm_num_groups=32,
+        latent_channels=config.latent_channels
+    )
+    return model
 
 def main(config):
     # Setup device and AMP
@@ -30,18 +47,9 @@ def main(config):
     print(f"Training set size: {len(train_dataset)}, Validation set size: {len(val_dataset)}")
 
     # Create VQ-GAN model (Generator part)
-    vq_model = VQModel(
-        in_channels=3, out_channels=3,
-        down_block_types=["DownEncoderBlock2D"] * 3,
-        up_block_types=["UpDecoderBlock2D"] * 3,
-        block_out_channels=[128, 256, 512],
-        latent_channels=config.vq_embed_dim,
-        num_vq_embeddings=config.vq_num_embed,
-        vq_embed_dim=config.vq_embed_dim,
-    ).to(device)
-
-    # Create Discriminator
-    discriminator = Discriminator(input_channels=3, n_layers=3, n_filters_start=config.disc_channels).to(device)
+    print("Setting up models...")
+    vq_model = create_vq_model(config).to(device)
+    discriminator = PatchGANDiscriminator(in_channels=config.in_channels).to(device)
 
     # Optimizers for Generator (VQ-Model) and Discriminator
     optimizer_g = torch.optim.Adam(vq_model.parameters(), lr=config.lr, betas=(0.5, 0.9))
