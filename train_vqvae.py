@@ -11,7 +11,8 @@ from torchvision.utils import save_image
 from tqdm import tqdm
 import collections
 
-from vqvae.models import VQModel, Discriminator, PerceptualLoss
+from diffusers import VQModel
+from vqvae.models import Discriminator, PerceptualLoss
 from vqvae.vqgan_trainer import VQGANTrainer
 from dataset import create_dataset
 
