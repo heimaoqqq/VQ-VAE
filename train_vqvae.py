@@ -16,7 +16,7 @@ from dataset import get_dataloaders
 # 导入自定义模块
 from vqvae.models import create_vq_model
 from vqvae.discriminator import Discriminator, weights_init
-from vqvae.trainers import VQGANTrainer
+from vqvae.vqgan_trainer import VQGANTrainer
 from vqvae.utils import save_reconstructed_images, validate
 
 # 导入其他库
