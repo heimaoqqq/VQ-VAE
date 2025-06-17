@@ -94,6 +94,14 @@ def main(config):
 
     best_val_recon_loss = float('inf')
 
+    # Metric name abbreviations for the progress bar
+    ABBREVIATIONS = {
+        "g_loss": "G", "d_loss": "D", "recon_loss": "Rec", "adv_g_loss": "Adv",
+        "commitment_loss": "Commit", "perplexity": "Perp", "d_loss_real": "D_real",
+        "d_loss_fake": "D_fake", "gradient_penalty": "GP",
+        "val_recon_loss": "V_Rec", "val_commitment_loss": "V_Commit", "val_perplexity": "V_Perp"
+    }
+
     print("Starting training...")
     for epoch in range(config.num_epochs):
         # =======================
@@ -112,8 +120,10 @@ def main(config):
             for k, v in metrics_dict.items():
                 train_metrics[k] += v
             
-            avg_metrics = {k: f"{v / (i + 1):.4f}" for k, v in train_metrics.items()}
-            progress_bar.set_postfix(avg_metrics)
+            # Abbreviate metric names for compact progress bar display
+            avg_metrics = {k: v / (i + 1) for k, v in train_metrics.items()}
+            postfix_metrics = {ABBREVIATIONS.get(k, k): f"{v:.4f}" for k, v in avg_metrics.items()}
+            progress_bar.set_postfix(postfix_metrics)
 
         # =======================
         #     Validation
@@ -133,10 +143,12 @@ def main(config):
                 for k, v in metrics_dict.items():
                     val_metrics[k] += v
                 
-                avg_metrics = {k: f"{v / (i + 1):.4f}" for k, v in val_metrics.items()}
-                val_progress_bar.set_postfix(avg_metrics)
+                # Abbreviate metric names for compact progress bar display
+                avg_metrics = {k: v / (i + 1) for k, v in val_metrics.items()}
+                postfix_metrics = {ABBREVIATIONS.get(k, k): f"{v:.4f}" for k, v in avg_metrics.items()}
+                val_progress_bar.set_postfix(postfix_metrics)
 
-        # Log metrics for the epoch
+        # Log metrics for the epoch (using full names)
         print(f"\n--- Epoch {epoch+1} Summary ---")
         for k, v in train_metrics.items():
             print(f"  Train {k:<20}: {v / len(train_loader):.4f}")
