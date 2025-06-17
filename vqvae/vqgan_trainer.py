@@ -65,8 +65,8 @@ class VQGANTrainer:
             perplexity = model_output["perplexity"]
 
             # Perceptual loss
-            # Make sure input and target are in the expected range for LPIPS ([-1, 1])
-            perceptual_loss = self.lpips_loss(reconstructed_x, x)
+            # The LPIPS library returns a loss per-image in the batch, so we need to take the mean
+            perceptual_loss = self.lpips_loss(reconstructed_x, x).mean()
 
             # Discriminator forward pass for generator loss
             # We want the discriminator to think the fake images are real
