@@ -3,169 +3,185 @@ VQ-GAN 训练脚本
 使用带有对抗性判别器的向量量化自编码器（VQ-GAN）训练微多普勒时频图的生成模型
 """
 
-import os
 import argparse
+import os
 import torch
-from torch.optim import AdamW
+from torch.utils.data import DataLoader, random_split
+from torchvision.utils import save_image
 from tqdm import tqdm
-from accelerate import Accelerator
-from lpips import LPIPS
+import collections
 
-# 导入数据集
-from dataset import get_dataloaders
-
-# 导入自定义模块
-from vqvae.discriminator import Discriminator, weights_init
+from vqvae.models import VQModel, Discriminator, PerceptualLoss
 from vqvae.vqgan_trainer import VQGANTrainer
-from vqvae.utils import save_reconstructed_images
-from vqvae.custom_vqgan import CustomVQGAN
+from dataset import create_dataset
 
-# 导入其他库
-try:
-    import wandb
-except ImportError:
-    print("未找到wandb库，将不使用wandb进行可视化")
-    wandb = None
+def main(config):
+    # Setup device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Train a VQ-GAN model.")
-    # Paths
-    parser.add_argument("--data_dir", type=str, default="dataset", help="Directory for the dataset.")
-    parser.add_argument("--output_dir", type=str, default="vqgan_model_output", help="Directory to save model and logs.")
+    # Create dataset and dataloaders
+    dataset = create_dataset(config.data_path, image_size=config.image_size)
     
-    # Data
-    parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training.")
-    parser.add_argument("--image_size", type=int, default=256, help="Image size for training.")
-
-    # Training
-    parser.add_argument("--epochs", type=int, default=300, help="Number of training epochs.")
-    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate for the generator (VQ-GAN).")
-    parser.add_argument("--disc_lr", type=float, default=1e-4, help="Learning rate for the discriminator.")
+    # Split dataset into training and validation
+    # Use a fixed generator for reproducibility
+    train_split = int(len(dataset) * (1.0 - config.val_split_ratio))
+    val_split = len(dataset) - train_split
+    train_dataset, val_dataset = random_split(dataset, [train_split, val_split], generator=torch.Generator().manual_seed(42))
     
-    # Model Config
-    parser.add_argument("--in_channels", type=int, default=3, help="Input channels for the VQ-GAN.")
-    parser.add_argument("--out_channels", type=int, default=3, help="Output channels for the VQ-GAN.")
-    parser.add_argument("--latent_channels", type=int, default=4, help="Number of channels in the latent space.")
-    parser.add_argument("--num_vq_embeddings", type=int, default=8192, help="Number of embeddings in the codebook.")
-    parser.add_argument("--block_out_channels", nargs='+', type=int, default=[64, 128, 256], help="Channel configurations for VQ-GAN blocks.")
-    parser.add_argument("--layers_per_block", type=int, default=2, help="Number of resnet blocks per down/up block.")
-    
-    # Loss Weights
-    parser.add_argument("--reconstruction_loss_weight", type=float, default=1.0, help="Weight for reconstruction loss.")
-    parser.add_argument("--perceptual_loss_weight", type=float, default=1.0, help="Weight for perceptual loss.")
-    parser.add_argument("--g_loss_adv_weight", type=float, default=0.8, help="Weight for adversarial generator loss.")
-    parser.add_argument("--vq_embed_loss_weight", type=float, default=1.0, help="Weight for VQ embedding loss (commitment loss).")
-    parser.add_argument("--gradient_penalty_weight", type=float, default=10.0, help="Weight for WGAN-GP gradient penalty.")
+    train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True, num_workers=4, pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False, num_workers=4, pin_memory=True)
+    print(f"Training set size: {len(train_dataset)}")
+    print(f"Validation set size: {len(val_dataset)}")
 
-    # Logging & Saving
-    parser.add_argument("--save_epochs", type=int, default=20, help="Save model every N epochs.")
-    parser.add_argument("--logging_steps", type=int, default=100, help="Log metrics every N steps.")
-    parser.add_argument("--use_wandb", action="store_true", help="Use wandb for logging.")
-    parser.add_argument("--wandb_project", type=str, default="vq-gan-microdoppler", help="Wandb project name.")
-    parser.add_argument("--wandb_name", type=str, default="vqgan-training-run", help="Wandb run name.")
-
-    return parser.parse_args()
-
-def train_vqgan(args):
-    accelerator = Accelerator(log_with="wandb" if args.use_wandb else None)
-    
-    if accelerator.is_main_process:
-        os.makedirs(args.output_dir, exist_ok=True)
-        images_dir = os.path.join(args.output_dir, "images")
-        os.makedirs(images_dir, exist_ok=True)
-        if args.use_wandb:
-            accelerator.init_trackers(
-                project_name=args.wandb_project,
-                config=vars(args),
-                init_kwargs={"wandb": {"name": args.wandb_name}}
-            )
-
-    train_dataloader, val_dataloader, _ = get_dataloaders(args.data_dir, args.batch_size, args.image_size)
-    
-    if accelerator.is_main_process:
-        print(f"找到 {len(train_dataloader.dataset) + len(val_dataloader.dataset)} 张图像")
-        total_samples = len(train_dataloader.dataset) + len(val_dataloader.dataset)
-        train_samples = len(train_dataloader.dataset)
-        val_samples = len(val_dataloader.dataset)
-        print("数据集统计信息:")
-        print(f"总样本数: {total_samples}")
-        print(f"训练集: {train_samples}个样本 ({train_samples/total_samples*100:.1f}%), {len(train_dataloader)}个批次")
-        print(f"验证集: {val_samples}个样本 ({val_samples/total_samples*100:.1f}%), {len(val_dataloader)}个批次")
-        print(f"批次大小: {args.batch_size}")
-
-    # Create VQ-GAN (Generator) using our custom implementation
-    vqgan = CustomVQGAN(
-        in_channels=args.in_channels,
-        out_channels=args.out_channels,
-        latent_channels=args.latent_channels,
-        num_vq_embeddings=args.num_vq_embeddings,
-        block_out_channels=args.block_out_channels,
-        layers_per_block=args.layers_per_block,
-    )
+    # Create VQ-GAN model (Generator part)
+    vq_model = VQModel(
+        in_channels=1,
+        out_channels=1,
+        down_block_types=["DownEncoderBlock2D", "DownEncoderBlock2D", "DownEncoderBlock2D"],
+        up_block_types=["UpDecoderBlock2D", "UpDecoderBlock2D", "UpDecoderBlock2D"],
+        block_out_channels=[128, 256, 512],
+        latent_channels=config.vq_embed_dim, # diffusers uses latent_channels for the VQ embedding dimension
+        num_vq_embeddings=config.vq_num_embed,
+        vq_embed_dim=config.vq_embed_dim,
+    ).to(device)
 
     # Create Discriminator
-    discriminator = Discriminator(input_channels=args.in_channels, n_layers=len(args.block_out_channels))
-    discriminator.apply(weights_init)
+    discriminator = Discriminator(
+        in_channels=1,
+        num_layers=3,
+        initial_channels=config.disc_channels,
+    ).to(device)
+
+    # Create Perceptual Loss
+    perceptual_loss = PerceptualLoss().to(device)
 
     # Optimizers
-    g_optimizer = AdamW(vqgan.parameters(), lr=args.lr, betas=(0.5, 0.9))
-    d_optimizer = AdamW(discriminator.parameters(), lr=args.disc_lr, betas=(0.5, 0.9))
-    
-    # Prepare with accelerator
-    vqgan, discriminator, g_optimizer, d_optimizer, train_dataloader, val_dataloader = accelerator.prepare(
-        vqgan, discriminator, g_optimizer, d_optimizer, train_dataloader, val_dataloader
-    )
+    optimizer_g = torch.optim.Adam(vq_model.parameters(), lr=config.lr, betas=(0.5, 0.9))
+    optimizer_d = torch.optim.Adam(discriminator.parameters(), lr=config.lr, betas=(0.5, 0.9))
 
-    # Initialize the trainer
+    # Create Trainer
     trainer = VQGANTrainer(
-        vqgan=vqgan,
+        vqgan=vq_model,
         discriminator=discriminator,
-        config=args,
-        g_optimizer=g_optimizer,
-        d_optimizer=d_optimizer,
-        accelerator=accelerator
+        perceptual_loss=perceptual_loss,
+        optimizer_g=optimizer_g,
+        optimizer_d=optimizer_d,
+        adv_weight=config.adv_weight,
+        commitment_weight=config.commitment_weight,
+        gp_weight=config.gp_weight,
+        device=device
     )
 
-    global_step = 0
-    for epoch in range(args.epochs):
-        progress_bar = tqdm(total=len(train_dataloader), desc=f"Epoch {epoch+1}/{args.epochs}", disable=not accelerator.is_local_main_process)
+    # Create output directories
+    os.makedirs(config.output_dir, exist_ok=True)
+    checkpoints_dir = os.path.join(config.output_dir, "checkpoints")
+    samples_dir = os.path.join(config.output_dir, "samples")
+    os.makedirs(checkpoints_dir, exist_ok=True)
+    os.makedirs(samples_dir, exist_ok=True)
+
+    # Get a fixed batch from validation set for consistent visualization
+    fixed_val_images, _ = next(iter(val_loader))
+    fixed_val_images = fixed_val_images.to(device)
+
+    best_val_recon_loss = float('inf')
+
+    print("Starting training...")
+    for epoch in range(config.num_epochs):
+        # =======================
+        #      Training
+        # =======================
+        vq_model.train()
+        discriminator.train()
         
-        for step, batch in enumerate(train_dataloader):
-            results, reconstructed = trainer.train_step(batch)
+        train_metrics = collections.defaultdict(float)
+        
+        progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{config.num_epochs} [Train]")
+        for i, (images, _) in enumerate(progress_bar):
+            images = images.to(device)
+            metrics_dict = trainer.train_step(images)
             
-            progress_bar.set_postfix({
-                "G_Loss": f"{results['g_loss']:.3f}",
-                "D_Loss": f"{results['d_loss']:.3f}",
-                "Recon": f"{results['reconstruction_loss']:.3f}",
-                "Perceptual": f"{results['perceptual_loss']:.3f}",
-                "Adv_G": f"{results['g_loss_adv']:.3f}",
-                "VQ": f"{results['vq_embed_loss']:.3f}",
-                "Perplexity": f"{results['perplexity']:.2f}"
-            })
-            progress_bar.update(1)
+            for k, v in metrics_dict.items():
+                train_metrics[k] += v
             
-            if accelerator.is_main_process:
-                if global_step % args.logging_steps == 0:
-                    accelerator.log(results, step=global_step)
+            avg_metrics = {k: f"{v / (i + 1):.4f}" for k, v in train_metrics.items()}
+            progress_bar.set_postfix(avg_metrics)
+
+        # =======================
+        #     Validation
+        # =======================
+        vq_model.eval()
+        discriminator.eval()
+        
+        val_metrics = collections.defaultdict(float)
+        
+        val_progress_bar = tqdm(val_loader, desc=f"Epoch {epoch+1}/{config.num_epochs} [Val]")
+        with torch.no_grad():
+            for i, (images, _) in enumerate(val_progress_bar):
+                images = images.to(device)
+                metrics_dict = trainer.validate_step(images)
+
+                for k, v in metrics_dict.items():
+                    val_metrics[k] += v
                 
-                if global_step % args.logging_steps == 0:
-                    save_reconstructed_images(batch, reconstructed, epoch, global_step, images_dir)
+                avg_metrics = {k: f"{v / (i + 1):.4f}" for k, v in val_metrics.items()}
+                val_progress_bar.set_postfix(avg_metrics)
 
-            global_step += 1
+        # Log metrics for the epoch
+        print(f"\n--- Epoch {epoch+1} Summary ---")
+        train_log_str = " | ".join([f"Train {k}: {v / len(train_loader):.4f}" for k, v in train_metrics.items()])
+        print(train_log_str)
+        val_log_str = " | ".join([f"Val {k}: {v / len(val_loader):.4f}" for k, v in val_metrics.items()])
+        print(val_log_str)
+        print("---------------------------\n")
+
+        # Save a sample of reconstructed images from the fixed validation batch
+        with torch.no_grad():
+            recon_images = vq_model(fixed_val_images).sample
         
-        progress_bar.close()
+        comparison = torch.cat([fixed_val_images[:8], recon_images[:8]])
+        save_image(comparison.cpu(), os.path.join(samples_dir, f"recon_epoch_{epoch+1}.png"), nrow=8)
 
-        if accelerator.is_main_process and (epoch + 1) % args.save_epochs == 0:
-            unwrapped_vqgan = accelerator.unwrap_model(vqgan)
-            unwrapped_discriminator = accelerator.unwrap_model(discriminator)
-            
-            vqgan_path = os.path.join(args.output_dir, f"vqgan_epoch_{epoch+1}.pt")
-            discriminator_path = os.path.join(args.output_dir, f"discriminator_epoch_{epoch+1}.pt")
+        # Save model checkpoint if it's the best one on the validation set
+        current_val_recon_loss = val_metrics["val_recon_loss"] / len(val_loader)
+        if current_val_recon_loss < best_val_recon_loss:
+            best_val_recon_loss = current_val_recon_loss
+            checkpoint_path = os.path.join(checkpoints_dir, "best_model.pt")
+            torch.save({
+                'vq_model_state_dict': vq_model.state_dict(),
+                'discriminator_state_dict': discriminator.state_dict(),
+                'optimizer_g_state_dict': optimizer_g.state_dict(),
+                'optimizer_d_state_dict': optimizer_d.state_dict(),
+                'epoch': epoch + 1,
+                'config': config,
+                'val_recon_loss': best_val_recon_loss
+            }, checkpoint_path)
+            print(f"Epoch {epoch+1}: New best model saved with Val Recon Loss: {best_val_recon_loss:.4f} to {checkpoint_path}")
 
-            torch.save(unwrapped_vqgan.state_dict(), vqgan_path)
-            torch.save(unwrapped_discriminator.state_dict(), discriminator_path)
-            accelerator.print(f"Epoch {epoch+1}: Models saved to {args.output_dir}")
 
-if __name__ == "__main__":
-    args = parse_args()
-    train_vqgan(args) 
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="Train a VQ-GAN model with detailed logging.")
+    parser.add_argument('--data_path', type=str, default='data/processed', help='Path to the processed data')
+    parser.add_argument('--output_dir', type=str, default='checkpoints/vqgan_final', help='Directory to save checkpoints and samples')
+    parser.add_argument('--image_size', type=int, default=256, help='Size to resize images to')
+    parser.add_argument('--batch_size', type=int, default=8, help='Batch size for training')
+    parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate for generator and discriminator')
+    parser.add_argument('--num_epochs', type=int, default=300, help='Number of training epochs')
+
+    # VQ-GAN Model parameters
+    parser.add_argument('--vq_embed_dim', type=int, default=256, help='Dimension of the codebook embeddings')
+    parser.add_argument('--vq_num_embed', type=int, default=8192, help='Number of codebook embeddings')
+    
+    # Discriminator parameters
+    parser.add_argument('--disc_channels', type=int, default=64, help='Initial channels for discriminator')
+
+    # Loss weights
+    parser.add_argument('--adv_weight', type=float, default=0.8, help='Weight for adversarial loss')
+    parser.add_argument('--commitment_weight', type=float, default=0.25, help='Weight for VQ commitment loss')
+    parser.add_argument('--gp_weight', type=float, default=10.0, help='Weight for gradient penalty')
+
+    # Dataset split
+    parser.add_argument('--val_split_ratio', type=float, default=0.05, help='Ratio of dataset to be used for validation')
+
+    config = parser.parse_args()
+    main(config) 

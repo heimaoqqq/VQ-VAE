@@ -69,9 +69,10 @@ class CustomVQGAN(nn.Module):
         h = self.encode(x)
         
         # 2. Quantize
+        # The diffusers VQ returns a tuple: (quant_states, vq_loss, (perplexity, min_encoding_indices, min_encodings))
         quant_states, vq_loss, perplexity_info = self.quantize(h)
-        # From diagnostics, we know perplexity is the 3rd item in the inner tuple
-        perplexity = perplexity_info[2]
+        # From diagnostics, we know perplexity is the first element of the inner tuple
+        perplexity = perplexity_info[0]
         
         # 3. Decode
         reconstructed_x = self.decode(quant_states)
