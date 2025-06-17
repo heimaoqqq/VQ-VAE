@@ -69,18 +69,13 @@ class LDMTrainer:
                 num_train_timesteps=1000,
                 beta_schedule=beta_schedule
             )
-        elif scheduler_type == "ddim":
-            self.noise_scheduler = DDIMScheduler(
-                num_train_timesteps=1000,
-                beta_schedule=beta_schedule
-            )
         elif scheduler_type == "pndm":
             self.noise_scheduler = PNDMScheduler(
                 num_train_timesteps=1000,
                 beta_schedule=beta_schedule
             )
         else:
-            # 默认使用DDIM
+            # 默认使用DDIM + squaredcos_cap_v2
             self.noise_scheduler = DDIMScheduler(
                 num_train_timesteps=1000,
                 beta_schedule=beta_schedule
@@ -307,7 +302,8 @@ class LDMTrainer:
                         num_images=4,
                         num_inference_steps=self.args.num_inference_steps,
                         output_dir=self.images_dir,
-                        step=global_step
+                        step=global_step,
+                        dataloader=self.val_dataloader  # 传递数据加载器以便进行三图对比
                     )
                     
                     print(f"生成的样本已保存到: {img_path}")

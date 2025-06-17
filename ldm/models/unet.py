@@ -49,4 +49,4 @@ def create_unet_model(latent_size, latent_channels=4):
     )
     print(f"通道配置: {block_out_channels}")
     print(f"注意力分布: 下采样={down_block_types}, 上采样={up_block_types}")
-    return model
+    return model 

@@ -35,7 +35,7 @@ def parse_args():
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="训练设备")
     parser.add_argument("--mixed_precision", type=str, default="fp16", choices=["no", "fp16", "bf16"], help="混合精度训练")
     parser.add_argument("--early_stop_patience", type=int, default=15, help="早停耐心值，大模型需要更长耐心")
-    parser.add_argument("--beta_schedule", type=str, default="cosine", choices=["linear", "cosine", "squaredcos_cap_v2"], help="beta调度类型")
+    parser.add_argument("--beta_schedule", type=str, default="squaredcos_cap_v2", choices=["linear", "cosine", "squaredcos_cap_v2"], help="beta调度类型，默认为squaredcos_cap_v2")
     parser.add_argument("--grid", action="store_true", help="是否生成网格图像")
     parser.add_argument("--scheduler_type", type=str, default="ddim", choices=["ddpm", "ddim", "pndm"], help="采样器类型，默认为DDIM")
     parser.add_argument("--gradient_accumulation_steps", type=int, default=2, help="梯度累积步数，降低到2将提升训练效率")

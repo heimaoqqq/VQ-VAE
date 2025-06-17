@@ -25,6 +25,7 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42, help="随机种子")
     parser.add_argument("--grid", action="store_true", help="是否生成网格图像")
     parser.add_argument("--scheduler_type", type=str, default="ddim", choices=["ddpm", "ddim", "pndm"], help="采样器类型，默认为DDIM")
+    parser.add_argument("--beta_schedule", type=str, default="squaredcos_cap_v2", choices=["linear", "cosine", "squaredcos_cap_v2"], help="beta调度类型，默认为squaredcos_cap_v2")
     return parser.parse_args()
 
 def generate_images(args):
@@ -71,15 +72,18 @@ def generate_images(args):
                 print("使用DDPM采样器")
         except Exception as e:
             print(f"无法加载特定调度器: {e}，使用默认配置")
-            # 默认使用DDIM
+            # 使用指定的调度器和beta_schedule
             if args.scheduler_type.lower() == "ddim":
                 from diffusers import DDIMScheduler
-                scheduler = DDIMScheduler(num_train_timesteps=1000)
+                scheduler = DDIMScheduler(num_train_timesteps=1000, beta_schedule=args.beta_schedule)
+                print(f"使用DDIM采样器 + {args.beta_schedule} beta调度")
             elif args.scheduler_type.lower() == "pndm":
                 from diffusers import PNDMScheduler
-                scheduler = PNDMScheduler(num_train_timesteps=1000)
+                scheduler = PNDMScheduler(num_train_timesteps=1000, beta_schedule=args.beta_schedule)
+                print(f"使用PNDM采样器 + {args.beta_schedule} beta调度")
             else:
-                scheduler = DDPMScheduler(num_train_timesteps=1000)
+                scheduler = DDPMScheduler(num_train_timesteps=1000, beta_schedule=args.beta_schedule)
+                print(f"使用DDPM采样器 + {args.beta_schedule} beta调度")
         
         # 尝试不同的路径加载UNet
         possible_unet_paths = [
@@ -190,10 +194,29 @@ def create_custom_pipeline(args):
         
         # 尝试加载调度器
         try:
-            scheduler = DDPMScheduler.from_pretrained(args.ldm_path)
+            if args.scheduler_type.lower() == "ddim":
+                from diffusers import DDIMScheduler
+                scheduler = DDIMScheduler.from_pretrained(args.ldm_path)
+                print(f"从模型加载DDIM调度器")
+            elif args.scheduler_type.lower() == "pndm":
+                from diffusers import PNDMScheduler
+                scheduler = PNDMScheduler.from_pretrained(args.ldm_path)
+                print(f"从模型加载PNDM调度器")
+            else:
+                from diffusers import DDPMScheduler
+                scheduler = DDPMScheduler.from_pretrained(args.ldm_path)
+                print(f"从模型加载DDPM调度器")
         except Exception:
-            print("无法加载特定的调度器，使用默认配置")
-            scheduler = DDPMScheduler(num_train_timesteps=1000)
+            print(f"无法加载特定的调度器，使用默认配置{args.scheduler_type.upper()} + {args.beta_schedule}")
+            if args.scheduler_type.lower() == "ddim":
+                from diffusers import DDIMScheduler
+                scheduler = DDIMScheduler(num_train_timesteps=1000, beta_schedule=args.beta_schedule)
+            elif args.scheduler_type.lower() == "pndm":
+                from diffusers import PNDMScheduler
+                scheduler = PNDMScheduler(num_train_timesteps=1000, beta_schedule=args.beta_schedule)
+            else:
+                from diffusers import DDPMScheduler
+                scheduler = DDPMScheduler(num_train_timesteps=1000, beta_schedule=args.beta_schedule)
     except Exception as e:
         print(f"加载模型组件时出错: {e}")
         return None
@@ -260,6 +283,9 @@ def create_custom_pipeline(args):
 if __name__ == "__main__":
     args = parse_args()
     print(f"正在使用设备: {args.device}")
+    print(f"采样器类型: {args.scheduler_type.upper()}")
+    print(f"Beta调度: {args.beta_schedule}")
+    print(f"推理步数: {args.num_inference_steps}")
     
     # 检查是否需要创建自定义Pipeline
     if args.vqvae_path and args.ldm_path:

@@ -7,7 +7,7 @@ from tqdm import tqdm
 from torchvision.utils import make_grid, save_image
 import matplotlib.pyplot as plt
 
-def save_generated_images(vq_model, unet, scheduler, latent_size, device, num_images=4, num_inference_steps=50, output_dir=None, step=0, guidance_scale=1.0, seed=None):
+def save_generated_images(vq_model, unet, scheduler, latent_size, device, num_images=4, num_inference_steps=50, output_dir=None, step=0, guidance_scale=1.0, seed=None, dataloader=None):
     """
     生成并保存样本图像
     
@@ -23,6 +23,7 @@ def save_generated_images(vq_model, unet, scheduler, latent_size, device, num_im
         step: 当前步数
         guidance_scale: 无条件引导尺度 (目前固定为1.0，为将来实现类别条件生成预留)
         seed: 随机种子，为None时使用随机生成
+        dataloader: 数据加载器，用于获取原始图像进行三图对比
         
     返回:
         保存的图像路径
@@ -79,26 +80,77 @@ def save_generated_images(vq_model, unet, scheduler, latent_size, device, num_im
             
             # 创建一个直观的对比图，显示噪声和生成的图像
             if num_images <= 8:  # 限制显示数量，避免图像过多
-                plt.figure(figsize=(12, 4 * (num_images // 2)))
+                plt.figure(figsize=(18, 4 * (num_images // 2)))
                 
-                for i in range(num_images):
-                    # 原始噪声
-                    plt.subplot(num_images, 2, i*2+1)
-                    noise_img = orig_latents[i].detach().cpu().permute(1, 2, 0)
-                    noise_img = (noise_img - noise_img.min()) / (noise_img.max() - noise_img.min())
-                    plt.imshow(noise_img[:, :, 0], cmap='viridis')
-                    plt.title(f"初始噪声 {i}")
-                    plt.axis('off')
-                    
-                    # 生成的图像
-                    plt.subplot(num_images, 2, i*2+2)
-                    gen_img = images[i].detach().cpu().permute(1, 2, 0)
-                    plt.imshow(gen_img)
-                    plt.title(f"生成图像 {i}")
-                    plt.axis('off')
+                # 尝试获取原始图像进行三图对比
+                original_images = None
+                if dataloader is not None:
+                    try:
+                        # 获取一批真实图像样本
+                        original_batch = next(iter(dataloader))[:num_images].to(device)
+                        
+                        # 使用VQ-VAE编码到潜在空间
+                        with torch.no_grad():
+                            original_latents = vq_model.encode(original_batch).latents
+                            
+                            # 添加噪声 - 选择最大噪声步骤(T)
+                            noise = torch.randn_like(original_latents)
+                            timesteps = torch.ones((original_latents.shape[0],), device=device).long() * (scheduler.num_train_timesteps - 1)
+                            noisy_latents = scheduler.add_noise(original_latents, noise, timesteps)
+                            
+                            # 解码噪声潜在变量以可视化
+                            noisy_images = vq_model.decode(noisy_latents).sample
+                            noisy_images = (noisy_images / 2 + 0.5).clamp(0, 1)
+                            
+                            # 获取原始图像用于可视化
+                            original_images = (original_batch / 2 + 0.5).clamp(0, 1)
+                    except Exception as e:
+                        print(f"获取原始图像失败: {e}")
+                        original_images = None
+                
+                # 如果成功获取了原始图像，进行三图对比
+                if original_images is not None:
+                    for i in range(num_images):
+                        # 原始图像
+                        plt.subplot(num_images, 3, i*3+1)
+                        orig_img = original_images[i].detach().cpu().permute(1, 2, 0)
+                        plt.imshow(orig_img)
+                        plt.title(f"原始图像 {i}")
+                        plt.axis('off')
+                        
+                        # 加噪图像
+                        plt.subplot(num_images, 3, i*3+2)
+                        noisy_img = noisy_images[i].detach().cpu().permute(1, 2, 0)
+                        plt.imshow(noisy_img)
+                        plt.title(f"完全加噪 {i}")
+                        plt.axis('off')
+                        
+                        # 生成的图像
+                        plt.subplot(num_images, 3, i*3+3)
+                        gen_img = images[i].detach().cpu().permute(1, 2, 0)
+                        plt.imshow(gen_img)
+                        plt.title(f"生成图像 {i}")
+                        plt.axis('off')
+                else:
+                    # 如果没有原始图像，则展示噪声和生成图像的对比
+                    for i in range(num_images):
+                        # 原始噪声
+                        plt.subplot(num_images, 2, i*2+1)
+                        noise_img = orig_latents[i].detach().cpu().permute(1, 2, 0)
+                        noise_img = (noise_img - noise_img.min()) / (noise_img.max() - noise_img.min())
+                        plt.imshow(noise_img[:, :, 0], cmap='viridis')
+                        plt.title(f"初始噪声 {i}")
+                        plt.axis('off')
+                        
+                        # 生成的图像
+                        plt.subplot(num_images, 2, i*2+2)
+                        gen_img = images[i].detach().cpu().permute(1, 2, 0)
+                        plt.imshow(gen_img)
+                        plt.title(f"生成图像 {i}")
+                        plt.axis('off')
                 
                 plt.tight_layout()
-                compare_path = os.path.join(output_dir, f"noise_vs_gen_step{step}.png")
+                compare_path = os.path.join(output_dir, f"comparison_step{step}.png")
                 plt.savefig(compare_path)
                 plt.close()
         
