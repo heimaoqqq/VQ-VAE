@@ -56,7 +56,7 @@ def main(config):
     ).to(device)
 
     # Create Perceptual Loss
-    perceptual_loss = PerceptualLoss().to(device)
+    perceptual_loss = PerceptualLoss(device=device)
 
     # Optimizers
     optimizer_g = torch.optim.Adam(vq_model.parameters(), lr=config.lr, betas=(0.5, 0.9))
