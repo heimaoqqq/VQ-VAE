@@ -130,7 +130,7 @@ if __name__ == '__main__':
     # Model params
     parser.add_argument('--in_channels', type=int, default=3, help='Input channels for the VQ-VAE model')
     parser.add_argument('--out_channels', type=int, default=3, help='Output channels for the VQ-VAE model')
-    parser.add_argument('--latent_channels', type=int, default=256, help='Number of channels in the latent space')
+    parser.add_argument('--latent_channels', type=int, default=512, help='Number of channels in the latent space')
     parser.add_argument('--vq_num_embed', type=int, default=8192, help='Number of codebook embeddings')
     parser.add_argument('--disc_channels', type=int, default=64, help='Initial channels for discriminator')
 
