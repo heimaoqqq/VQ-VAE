@@ -48,6 +48,16 @@ def create_vq_model(config):
     return model
 
 def main(config):
+    # --- ULTIMATE SANITY CHECK ---
+    print("--- Verifying file content of train_vqvae.py ---")
+    try:
+        with open(__file__, 'r') as f:
+            print(f.read())
+    except Exception as e:
+        print(f"Could not read source file: {e}")
+    print("--- End of file content ---")
+    # --- END SANITY CHECK ---
+
     # Setup device and AMP
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     use_amp = device.type == 'cuda'
