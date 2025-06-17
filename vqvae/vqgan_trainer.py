@@ -17,7 +17,7 @@ class VQGANTrainer:
         self.gan_loss_weight = gan_loss_weight
         
         # 损失函数
-        self.perceptual_loss = PerceptualLoss().to(device) if use_perceptual else None
+        self.perceptual_loss = PerceptualLoss(self.device) if use_perceptual else None
         self.lambda_perceptual = lambda_perceptual
 
     def train_step(self, images):
