@@ -12,7 +12,7 @@ from tqdm import tqdm
 import collections
 
 from diffusers import VQModel
-from vqvae.models import Discriminator, PerceptualLoss
+from vqvae.models.gan import Discriminator, PerceptualLoss
 from vqvae.vqgan_trainer import VQGANTrainer
 from dataset import create_dataset
 
