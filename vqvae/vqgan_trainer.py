@@ -48,23 +48,16 @@ class VQGANTrainer:
             h = self.vqvae.quant_conv(h)
             
             # 2. Quantize and get outputs
-            quantized, commit_loss, info = self.vqvae.quantize(h)
-            
-            # 3. Calculate perplexity manually
-            # Ensure code_usage is on CPU for one_hot and calculations
-            code_usage = info['code_usage'].to('cpu')
-            # Create one-hot vectors and calculate avg_probs
-            avg_probs = torch.mean(code_usage, dim=0)
-            perplexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs + 1e-10)))
+            quantized, commit_loss, _ = self.vqvae.quantize(h) # Perplexity is no longer monitored
 
-            # 4. Decode
+            # 3. Decode
             decoded_imgs = self.vqvae.decoder(self.vqvae.post_quant_conv(quantized))
             
-        return decoded_imgs, commit_loss, perplexity
+        return decoded_imgs, commit_loss
 
     def _train_batch(self, batch):
         real_imgs = batch
-        decoded_imgs, commitment_loss, perplexity = self._get_vq_output(real_imgs)
+        decoded_imgs, commitment_loss = self._get_vq_output(real_imgs)
 
         with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
             l1_loss = F.l1_loss(decoded_imgs, real_imgs)
@@ -92,17 +85,16 @@ class VQGANTrainer:
         self.g_scaler.update()
 
         return {'L1': l1_loss.item(), 'Perceptual': perceptual_loss.item(), 'Adv': g_loss_adv.item(),
-                'Commit': commitment_loss.item(), 'D': d_loss.item(), 'GP': gradient_penalty.item(),
-                'Perplexity': perplexity.item()}
+                'Commit': commitment_loss.item(), 'D': d_loss.item(), 'GP': gradient_penalty.item()}
 
     def _validate_batch(self, batch):
         real_imgs = batch
-        decoded_imgs, commitment_loss, perplexity = self._get_vq_output(real_imgs)
+        decoded_imgs, commitment_loss = self._get_vq_output(real_imgs)
         with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
             l1_loss = F.l1_loss(decoded_imgs, real_imgs)
             perceptual_loss = self.perceptual_loss(decoded_imgs, real_imgs).mean()
         return {'L1': l1_loss.item(), 'Perceptual': perceptual_loss.item(),
-                'Commit': commitment_loss.item(), 'Perplexity': perplexity.item()}
+                'Commit': commitment_loss.item()}
 
     def _run_epoch(self, dataloader, is_train, epoch, num_epochs):
         phase = "Train" if is_train else "Validation"
@@ -188,9 +180,9 @@ class VQGANTrainer:
         if not metrics: return ""
         for key, val in metrics.items():
             if short:
-                key_map = {'L1': 'L1', 'Perceptual': 'Perc', 'Adv': 'Adv', 'Commit': 'Com', 'D': 'D', 'GP': 'GP', 'Perplexity': 'Perp'}
+                key_map = {'L1': 'L1', 'Perceptual': 'Perc', 'Adv': 'Adv', 'Commit': 'Com', 'D': 'D', 'GP': 'GP'}
                 name = key_map.get(key, key)
-                log_str.append(f"{name}={val:.2f}" if key != 'Perplexity' else f"{name}={val:.0f}")
+                log_str.append(f"{name}={val:.2f}")
             else:
                 log_str.append(f"{key}={val:.4f}")
         return ", ".join(log_str)
