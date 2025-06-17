@@ -40,7 +40,12 @@ class VQGANTrainer:
         
         # VQVAE forward pass to get reconstructed images and losses
         with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
-            decoded_imgs, commitment_loss, _ = self.vqvae(real_imgs)
+            # Manually perform the forward pass to access the commitment loss from the quantizer
+            h = self.vqvae.encoder(real_imgs)
+            h = self.vqvae.quant_conv(h)
+            quant, commitment_loss, _ = self.vqvae.quantize(h)
+            decoded_imgs = self.vqvae.decoder(self.vqvae.post_quant_conv(quant))
+
             l1_loss = F.l1_loss(decoded_imgs, real_imgs)
             perceptual_loss = self.perceptual_loss(decoded_imgs, real_imgs).mean()
 
@@ -98,7 +103,12 @@ class VQGANTrainer:
     def _validate_batch(self, batch):
         real_imgs = batch
         with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
-            decoded_imgs, commitment_loss, _ = self.vqvae(real_imgs)
+            # Manually perform the forward pass to access the commitment loss from the quantizer
+            h = self.vqvae.encoder(real_imgs)
+            h = self.vqvae.quant_conv(h)
+            quant, commitment_loss, _ = self.vqvae.quantize(h)
+            decoded_imgs = self.vqvae.decoder(self.vqvae.post_quant_conv(quant))
+
             l1_loss = F.l1_loss(decoded_imgs, real_imgs)
             perceptual_loss = self.perceptual_loss(decoded_imgs, real_imgs).mean()
 
