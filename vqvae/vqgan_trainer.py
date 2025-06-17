@@ -41,8 +41,10 @@ class VQGANTrainer:
     def _get_vq_output(self, real_imgs):
         with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
             # --- Manual VQ-VAE Logic to bypass environment issues ---
-            # 1. Encode
-            h = self.vqvae.encoder(real_imgs)
+            # 1. Encode. The AutoencoderKL encoder returns a distribution object.
+            # We take the mode (the mean) of this distribution as our latent representation.
+            h = self.vqvae.encoder(real_imgs).mode()
+            
             h = self.vqvae.quant_conv(h)
             
             # 2. Quantize and get outputs
