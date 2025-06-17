@@ -60,7 +60,7 @@ class VQGANTrainer:
         quant_states, commitment_loss, vq_info = self.vqgan.quantize(h)
         recon_images = self.vqgan.decode(quant_states).sample
 
-        perplexity = vq_info[2]
+        perplexity = vq_info[1]
         
         # ====================================================
         # 1. Train the Discriminator
@@ -131,7 +131,7 @@ class VQGANTrainer:
         quant_states, commitment_loss, vq_info = self.vqgan.quantize(h)
         recon_images = self.vqgan.decode(quant_states).sample
 
-        perplexity = vq_info[2]
+        perplexity = vq_info[1]
 
         recon_loss_l1 = F.l1_loss(recon_images, images)
         recon_loss_perceptual = self.perceptual_loss(recon_images, images)
