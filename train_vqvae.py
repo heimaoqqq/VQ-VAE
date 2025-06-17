@@ -138,10 +138,11 @@ def main(config):
 
         # Log metrics for the epoch
         print(f"\n--- Epoch {epoch+1} Summary ---")
-        train_log_str = " | ".join([f"Train {k}: {v / len(train_loader):.4f}" for k, v in train_metrics.items()])
-        print(train_log_str)
-        val_log_str = " | ".join([f"Val {k}: {v / len(val_loader):.4f}" for k, v in val_metrics.items()])
-        print(val_log_str)
+        for k, v in train_metrics.items():
+            print(f"  Train {k:<20}: {v / len(train_loader):.4f}")
+        print("-" * 30)
+        for k, v in val_metrics.items():
+            print(f"  Val   {k:<20}: {v / len(val_loader):.4f}")
         print("---------------------------\n")
 
         # Save a sample of reconstructed images from the fixed validation batch
@@ -153,7 +154,7 @@ def main(config):
         save_image(comparison.cpu(), os.path.join(samples_dir, f"recon_epoch_{epoch+1}.png"), nrow=8)
 
         # Save model checkpoint if it's the best one on the validation set
-        current_val_recon_loss = val_metrics["V_Rec"] / len(val_loader)
+        current_val_recon_loss = val_metrics["val_recon_loss"] / len(val_loader)
         if current_val_recon_loss < best_val_recon_loss:
             best_val_recon_loss = current_val_recon_loss
             checkpoint_path = os.path.join(checkpoints_dir, "best_model.pt")
