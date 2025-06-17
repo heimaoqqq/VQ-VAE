@@ -30,6 +30,16 @@ def create_vq_model(config):
     return model
 
 def main(config):
+    # --- Ultimate Debugging Step ---
+    import inspect
+    from vqvae.vqgan_trainer import VQGANTrainer
+    print("--- DEBUG: Source code of create_vq_model ---")
+    print("".join(inspect.getsourcelines(create_vq_model)[0]))
+    print("--- DEBUG: Source code of VQGANTrainer._get_vq_output ---")
+    print("".join(inspect.getsourcelines(VQGANTrainer._get_vq_output)[0]))
+    print("---------------------------------------------")
+    # --- End Debugging Step ---
+
     # Setup device and AMP
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     use_amp = device.type == 'cuda'
