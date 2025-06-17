@@ -38,8 +38,8 @@ def main(config):
 
     # Create VQ-GAN model (Generator part)
     vq_model = VQModel(
-        in_channels=1,
-        out_channels=1,
+        in_channels=3,
+        out_channels=3,
         down_block_types=["DownEncoderBlock2D", "DownEncoderBlock2D", "DownEncoderBlock2D"],
         up_block_types=["UpDecoderBlock2D", "UpDecoderBlock2D", "UpDecoderBlock2D"],
         block_out_channels=[128, 256, 512],
@@ -50,7 +50,7 @@ def main(config):
 
     # Create Discriminator
     discriminator = Discriminator(
-        input_channels=1,
+        input_channels=3,
         n_layers=3,
         n_filters_start=config.disc_channels,
     ).to(device)
