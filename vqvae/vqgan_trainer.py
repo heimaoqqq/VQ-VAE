@@ -57,10 +57,9 @@ class VQGANTrainer:
         # (quant_states, vq_loss_dict, info) where vq_loss_dict is not used here but vq_loss is inside.
         # The vq_loss that VQModel's forward returns is the commitment loss.
         # We need the full output from quantize.
-        quant_states, vq_loss_dict, vq_info = self.vqgan.quantize(h)
+        quant_states, commitment_loss, vq_info = self.vqgan.quantize(h)
         recon_images = self.vqgan.decode(quant_states).sample
 
-        commitment_loss = vq_loss_dict.get("commitment_loss", torch.tensor(0.0, device=self.device))
         perplexity = vq_info[2]
         
         # ====================================================
@@ -125,10 +124,13 @@ class VQGANTrainer:
         
         h = self.vqgan.encoder(images)
         h = self.vqgan.quant_conv(h)
-        quant_states, vq_loss_dict, vq_info = self.vqgan.quantize(h)
+        # The 'quantize' method in diffusers' VQModel returns:
+        # (quant_states, vq_loss_dict, info) where vq_loss_dict is not used here but vq_loss is inside.
+        # The vq_loss that VQModel's forward returns is the commitment loss.
+        # We need the full output from quantize.
+        quant_states, commitment_loss, vq_info = self.vqgan.quantize(h)
         recon_images = self.vqgan.decode(quant_states).sample
 
-        commitment_loss = vq_loss_dict.get("commitment_loss", torch.tensor(0.0, device=self.device))
         perplexity = vq_info[2]
 
         recon_loss_l1 = F.l1_loss(recon_images, images)
