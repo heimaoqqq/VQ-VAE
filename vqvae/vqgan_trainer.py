@@ -5,7 +5,7 @@ import torch
 import torch.nn.functional as F
 from lpips import LPIPS
 from accelerate import Accelerator
-from torch.cuda.amp import autocast
+from torch.amp import autocast
 
 from .models import PerceptualLoss
 
@@ -55,7 +55,7 @@ class VQGANTrainer:
         self.discriminator.train()
         self.optimizer_d.zero_grad()
 
-        with autocast():
+        with autocast(device_type=self.device):
             # Generate fake images first to be used in both D and G training
             h = self.vqgan.encoder(images)
             h = self.vqgan.quant_conv(h)
@@ -87,7 +87,7 @@ class VQGANTrainer:
             perplexity = vq_info[1]
             perplexity_item = perplexity.item() if perplexity is not None else -1.0
         
-        with autocast():
+        with autocast(device_type=self.device):
             # Adversarial Loss (Generator's goal is to fool the discriminator)
             g_loss_adv = -self.discriminator(recon_images).mean()
             
@@ -123,18 +123,17 @@ class VQGANTrainer:
     def validate_step(self, images):
         self.vqgan.eval()
         
-        with autocast():
-            h = self.vqgan.encoder(images)
-            h = self.vqgan.quant_conv(h)
-            quant_states, commitment_loss, vq_info = self.vqgan.quantize(h)
-            recon_images = self.vqgan.decode(quant_states).sample
+        h = self.vqgan.encoder(images)
+        h = self.vqgan.quant_conv(h)
+        quant_states, commitment_loss, vq_info = self.vqgan.quantize(h)
+        recon_images = self.vqgan.decode(quant_states).sample
 
-            perplexity = vq_info[1]
-            perplexity_item = perplexity.item() if perplexity is not None else -1.0
+        perplexity = vq_info[1]
+        perplexity_item = perplexity.item() if perplexity is not None else -1.0
 
-            recon_loss_l1 = F.l1_loss(recon_images, images)
-            recon_loss_perceptual = self.perceptual_loss(recon_images, images)
-            recon_loss = recon_loss_l1 + recon_loss_perceptual
+        recon_loss_l1 = F.l1_loss(recon_images, images)
+        recon_loss_perceptual = self.perceptual_loss(recon_images, images)
+        recon_loss = recon_loss_l1 + recon_loss_perceptual
         
         return {
             "val_recon_loss": recon_loss.item(),

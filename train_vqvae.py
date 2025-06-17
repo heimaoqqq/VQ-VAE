@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader, random_split
 from torchvision.utils import save_image
 from tqdm import tqdm
 import collections
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 
 from diffusers import VQModel
 from vqvae.discriminator import Discriminator
@@ -127,7 +127,7 @@ def main(config):
         with torch.no_grad():
             for i, (images, _) in enumerate(val_progress_bar):
                 images = images.to(device)
-                with autocast(enabled=use_amp):
+                with autocast(device_type=device.type, enabled=use_amp):
                     metrics_dict = trainer.validate_step(images)
 
                 for k, v in metrics_dict.items():
@@ -146,7 +146,7 @@ def main(config):
 
         # Save a sample of reconstructed images from the fixed validation batch
         with torch.no_grad():
-            with autocast(enabled=use_amp):
+            with autocast(device_type=device.type, enabled=use_amp):
                 recon_images = vq_model(fixed_val_images).sample
         
         comparison = torch.cat([fixed_val_images[:8], recon_images[:8]])
