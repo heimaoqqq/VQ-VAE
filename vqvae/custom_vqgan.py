@@ -1,0 +1,93 @@
+import torch
+import torch.nn as nn
+from diffusers.models.autoencoders.vae import Encoder, Decoder
+from diffusers.models.autoencoders.vq_model import VectorQuantizer
+
+class CustomVQGAN(nn.Module):
+    def __init__(
+        self,
+        in_channels: int = 3,
+        out_channels: int = 3,
+        block_out_channels = [64, 128, 256],
+        layers_per_block: int = 2,
+        latent_channels: int = 4,
+        num_vq_embeddings: int = 8192,
+    ):
+        super().__init__()
+
+        # Pass latent_channels to vq_embed_dim
+        vq_embed_dim = latent_channels
+
+        # Encoder
+        self.encoder = Encoder(
+            in_channels=in_channels,
+            out_channels=latent_channels,
+            down_block_types=[
+                "DownEncoderBlock2D",
+                "DownEncoderBlock2D",
+                "DownEncoderBlock2D",
+            ],
+            block_out_channels=block_out_channels,
+            layers_per_block=layers_per_block,
+        )
+
+        # Vector Quantizer
+        self.quantize = VectorQuantizer(
+            num_embeddings=num_vq_embeddings,
+            embedding_dim=vq_embed_dim,
+            commitment_cost=0.25,
+        )
+
+        # Decoder
+        self.decoder = Decoder(
+            in_channels=latent_channels,
+            out_channels=out_channels,
+            up_block_types=[
+                "UpDecoderBlock2D", 
+                "UpDecoderBlock2D", 
+                "UpDecoderBlock2D"
+            ],
+            block_out_channels=block_out_channels,
+            layers_per_block=layers_per_block,
+        )
+
+        # The VQModel from diffusers has these two conv layers before and after quantization
+        self.quant_conv = nn.Conv2d(latent_channels, latent_channels, 1)
+        self.post_quant_conv = nn.Conv2d(latent_channels, latent_channels, 1)
+
+    def encode(self, x):
+        h = self.encoder(x)
+        h = self.quant_conv(h)
+        return h
+
+    def decode(self, h):
+        h = self.post_quant_conv(h)
+        h = self.decoder(h)
+        return h
+
+    def forward(self, x, return_dict=False):
+        # 1. Encode
+        h = self.encode(x)
+        
+        # 2. Quantize
+        quant_states, vq_loss_dict = self.quantize(h)
+        
+        # 3. Decode
+        reconstructed_x = self.decode(quant_states)
+
+        # 4. Calculate losses
+        reconstruction_loss = nn.functional.l1_loss(reconstructed_x, x)
+        vq_loss = vq_loss_dict["vq_loss"]
+        
+        # Following diffusers' VQModel, the total loss is recon + vq_loss
+        total_loss = reconstruction_loss + vq_loss
+
+        if not return_dict:
+            return (reconstructed_x, total_loss)
+
+        return {
+            "sample": reconstructed_x,
+            "loss": total_loss,
+            "reconstruction_loss": reconstruction_loss,
+            "vq_loss": vq_loss
+        } 

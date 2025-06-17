@@ -9,7 +9,6 @@ import torch
 from torch.optim import AdamW
 from tqdm import tqdm
 from accelerate import Accelerator
-from diffusers import VQModel
 from lpips import LPIPS
 
 # 导入数据集
@@ -19,6 +18,7 @@ from dataset import get_dataloaders
 from vqvae.discriminator import Discriminator, weights_init
 from vqvae.vqgan_trainer import VQGANTrainer
 from vqvae.utils import save_reconstructed_images
+from vqvae.custom_vqgan import CustomVQGAN
 
 # 导入其他库
 try:
@@ -93,18 +93,12 @@ def train_vqgan(args):
         print(f"验证集: {val_samples}个样本 ({val_samples/total_samples*100:.1f}%), {len(val_dataloader)}个批次")
         print(f"批次大小: {args.batch_size}")
 
-    # Create VQ-GAN (Generator)
-    # The 'in_channels_for_down_blocks' argument is added to explicitly define the input channels for each down block.
-    # This can resolve issues in some versions of diffusers where the channel progression is not inferred correctly.
-    # The progression should be: block1_in=64, block2_in=64, block3_in=128
-    # in_channels_for_down_blocks = [args.block_out_channels[0]] + list(args.block_out_channels[:-1])
-
-    vqgan = VQModel(
+    # Create VQ-GAN (Generator) using our custom implementation
+    vqgan = CustomVQGAN(
         in_channels=args.in_channels,
         out_channels=args.out_channels,
         latent_channels=args.latent_channels,
         num_vq_embeddings=args.num_vq_embeddings,
-        vq_embed_dim=args.latent_channels,
         block_out_channels=args.block_out_channels,
         layers_per_block=args.layers_per_block,
     )
