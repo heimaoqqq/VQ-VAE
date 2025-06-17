@@ -44,7 +44,7 @@ class MicroDopplerDataset(Dataset):
         if self.transform:
             image = self.transform(image)
             
-        return image
+        return image, 0
 
 def get_dataloaders(data_dir, batch_size=32, image_size=256, train_ratio=0.8, val_ratio=0.2):
     """
