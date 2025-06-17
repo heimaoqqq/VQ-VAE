@@ -48,6 +48,7 @@ def parse_args():
     parser.add_argument("--latent_channels", type=int, default=4, help="Number of channels in the latent space.")
     parser.add_argument("--num_vq_embeddings", type=int, default=8192, help="Number of embeddings in the codebook.")
     parser.add_argument("--block_out_channels", nargs='+', type=int, default=[64, 128, 256], help="Channel configurations for VQ-GAN blocks.")
+    parser.add_argument("--layers_per_block", type=int, default=2, help="Number of resnet blocks per down/up block.")
     
     # Loss Weights
     parser.add_argument("--reconstruction_loss_weight", type=float, default=1.0, help="Weight for reconstruction loss.")
@@ -96,7 +97,7 @@ def train_vqgan(args):
     # The 'in_channels_for_down_blocks' argument is added to explicitly define the input channels for each down block.
     # This can resolve issues in some versions of diffusers where the channel progression is not inferred correctly.
     # The progression should be: block1_in=64, block2_in=64, block3_in=128
-    in_channels_for_down_blocks = [args.block_out_channels[0]] + list(args.block_out_channels[:-1])
+    # in_channels_for_down_blocks = [args.block_out_channels[0]] + list(args.block_out_channels[:-1])
 
     vqgan = VQModel(
         in_channels=args.in_channels,
@@ -105,7 +106,7 @@ def train_vqgan(args):
         num_vq_embeddings=args.num_vq_embeddings,
         vq_embed_dim=args.latent_channels,
         block_out_channels=args.block_out_channels,
-        in_channels_for_down_blocks=in_channels_for_down_blocks,
+        layers_per_block=args.layers_per_block,
     )
 
     # Create Discriminator
