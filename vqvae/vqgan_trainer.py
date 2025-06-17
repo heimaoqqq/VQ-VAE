@@ -111,7 +111,7 @@ class VQGANTrainer:
             "g_loss_adv": g_loss_adv.item(),
             "vq_embed_loss": vq_embed_loss.item(),
             "gradient_penalty": gradient_penalty.item(),
-            "perplexity": perplexity.mean().item()
+            "perplexity": perplexity.float().mean().item()
         }, reconstructed_x
 
     def train_step_fp16(self, images, vq_scaler, disc_scaler):
