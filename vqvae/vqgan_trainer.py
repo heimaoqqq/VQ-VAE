@@ -55,7 +55,7 @@ class VQGANTrainer:
         self.discriminator.train()
         self.optimizer_d.zero_grad()
 
-        with autocast(device_type=self.device):
+        with autocast(device_type=self.device.type):
             # Generate fake images first to be used in both D and G training
             h = self.vqgan.encoder(images)
             h = self.vqgan.quant_conv(h)
@@ -87,7 +87,7 @@ class VQGANTrainer:
             perplexity = vq_info[1]
             perplexity_item = perplexity.item() if perplexity is not None else -1.0
         
-        with autocast(device_type=self.device):
+        with autocast(device_type=self.device.type):
             # Adversarial Loss (Generator's goal is to fool the discriminator)
             g_loss_adv = -self.discriminator(recon_images).mean()
             
