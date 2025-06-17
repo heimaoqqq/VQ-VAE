@@ -62,6 +62,7 @@ class LDMTrainer:
         scheduler_type = args.scheduler_type
         
         print(f"使用调度器: {scheduler_type.upper()}")
+        print(f"使用Beta调度: {beta_schedule}")
         
         if scheduler_type == "ddpm":
             self.noise_scheduler = DDPMScheduler(
@@ -92,12 +93,13 @@ class LDMTrainer:
         print(f"潜在空间大小: {self.latent_size}x{self.latent_size}")
         print(f"使用混合精度: {args.mixed_precision}")
         
-        # 初始化优化器
+        # 初始化优化器，增加weight_decay以增强正则化
         self.optimizer = AdamW(
             unet.parameters(), 
             lr=args.lr,
             betas=(0.9, 0.999),
-            weight_decay=1e-5 
+            weight_decay=0.01,  # 增加weight_decay，标准扩散模型通常使用0.01
+            eps=1e-8  # 增加epsilon以提高数值稳定性
         )
         
         # 添加学习率调度器
@@ -106,9 +108,9 @@ class LDMTrainer:
         else:
             num_training_steps = args.num_train_steps
             
-        num_warmup_steps = 2000  # 固定预热步数为2000步
+        num_warmup_steps = int(num_training_steps * 0.05)  # 使用总步数的5%作为预热步数
         
-        print(f"设置学习率调度器 - 总训练步数: {num_training_steps}, 预热步数: {num_warmup_steps}")
+        print(f"设置学习率调度器 - 总训练步数: {num_training_steps}, 预热步数: {num_warmup_steps} (总步数的5%)")
         self.lr_scheduler = get_cosine_schedule_with_warmup(
             self.optimizer,
             num_warmup_steps=num_warmup_steps,
@@ -150,12 +152,26 @@ class LDMTrainer:
         self.early_stop_counter = 0
         self.early_stop_patience = args.early_stop_patience
         
+        # 初始化训练状态跟踪变量
+        self.current_epoch = 0
+        self.global_step = 0
+        
         # 初始化wandb
         if args.use_wandb:
             self.accelerator.init_trackers(
                 project_name=args.wandb_project,
                 init_kwargs={"wandb": {"name": args.wandb_name}}
             )
+            # 记录重要的超参数
+            self.accelerator.log({
+                "lr": args.lr,
+                "batch_size": args.batch_size,
+                "gradient_accumulation_steps": gradient_accumulation_steps,
+                "effective_batch_size": args.batch_size * gradient_accumulation_steps,
+                "beta_schedule": beta_schedule,
+                "mixed_precision": args.mixed_precision,
+                "model_parameters": sum(p.numel() for p in unet.parameters()) / 1e6  # 百万参数数量
+            })
     
     def load_checkpoint(self, checkpoint_path):
         """
@@ -173,6 +189,14 @@ class LDMTrainer:
             
             # 使用accelerator加载检查点
             self.accelerator.load_state(checkpoint_path)
+            
+            # 尝试加载训练状态
+            training_state_path = os.path.join(checkpoint_path, "training_state.pt")
+            if os.path.exists(training_state_path):
+                training_state = torch.load(training_state_path)
+                self.current_epoch = training_state.get("epoch", 0)
+                self.global_step = training_state.get("global_step", 0)
+                print(f"已恢复训练状态: 轮次={self.current_epoch}, 全局步数={self.global_step}")
             
             # 尝试加载最佳验证损失
             best_val_loss_path = os.path.join(checkpoint_path, "best_val_loss.pt")
@@ -192,8 +216,25 @@ class LDMTrainer:
     
     def train(self):
         """执行完整的训练流程"""
-        global_step = 0
-        for epoch in range(self.args.epochs):
+        start_epoch = self.current_epoch
+        global_step = self.global_step
+        
+        # 监控初始显存使用情况
+        if torch.cuda.is_available():
+            print(f"训练开始前GPU内存占用: {torch.cuda.memory_allocated() / (1024**2):.2f} MB")
+            print(f"训练开始前GPU最大内存占用: {torch.cuda.max_memory_allocated() / (1024**2):.2f} MB")
+        
+        # 使用gradscaler处理混合精度训练中的梯度缩放
+        scaler = None
+        if self.args.mixed_precision != "no" and not self.accelerator.native_amp:
+            print("使用自定义梯度缩放器")
+            scaler = torch.cuda.amp.GradScaler()
+        
+        best_val_loss_epoch = start_epoch
+        
+        print(f"开始训练，从轮次 {start_epoch + 1} 到 {self.args.epochs}")
+        for epoch in range(start_epoch, self.args.epochs):
+            self.current_epoch = epoch
             self.unet.train()
             epoch_loss = 0.0
             tqdm_bar = tqdm(self.train_dataloader, desc=f"Epoch {epoch+1}/{self.args.epochs}")
@@ -221,21 +262,33 @@ class LDMTrainer:
                     self.accelerator.backward(loss)
                     
                     # 只在梯度累积完成时进行梯度裁剪和优化器步骤
-                    # 这种方式可以避免梯度反缩放(unscale)被多次调用的错误
                     if self.accelerator.sync_gradients:
-                        if hasattr(self.accelerator, "clip_grad_norm_"):
-                            self.accelerator.clip_grad_norm_(self.unet.parameters(), 1.0)
+                        # 使用更小的梯度裁剪阈值，增加训练稳定性
+                        self.accelerator.clip_grad_norm_(self.unet.parameters(), 0.5)
                     
                     self.optimizer.step()
                     self.lr_scheduler.step()  # 更新学习率
                     self.optimizer.zero_grad()
                 
                 epoch_loss += loss.detach().item()
-                tqdm_bar.set_postfix({"loss": loss.item()})
+                current_lr = self.lr_scheduler.get_last_lr()[0]
+                tqdm_bar.set_postfix({"loss": loss.item(), "lr": current_lr})
                 
                 # 记录日志
                 if self.args.use_wandb and global_step % self.args.logging_steps == 0:
-                    logs = {"train/loss": loss.detach().item(), "train/step": global_step}
+                    logs = {
+                        "train/loss": loss.detach().item(), 
+                        "train/step": global_step,
+                        "train/lr": current_lr,
+                        "train/epoch": epoch + (step + 1) / len(self.train_dataloader)
+                    }
+                    
+                    if torch.cuda.is_available():
+                        logs.update({
+                            "system/gpu_memory": torch.cuda.memory_allocated() / (1024**3),  # GB
+                            "system/gpu_memory_peak": torch.cuda.max_memory_allocated() / (1024**3)  # GB
+                        })
+                        
                     self.accelerator.log(logs, step=global_step)
                 
                 # 评估和生成样本
@@ -284,12 +337,19 @@ class LDMTrainer:
                 print(f"验证损失: {val_loss:.6f}")
                 
                 if self.args.use_wandb:
-                    self.accelerator.log({"val/loss": val_loss}, step=global_step)
+                    self.accelerator.log({
+                        "val/loss": val_loss,
+                        "val/epoch": epoch + 1
+                    }, step=global_step)
                 
                 # 检查是否为最佳验证损失
                 if val_loss < self.best_val_loss:
+                    previous_best = self.best_val_loss
                     self.best_val_loss = val_loss
+                    best_val_loss_epoch = epoch
                     self.early_stop_counter = 0
+                    
+                    print(f"验证损失改善: {previous_best:.6f} -> {self.best_val_loss:.6f}")
                     
                     # 保存最佳模型
                     # 先删除之前的最佳模型
@@ -348,10 +408,22 @@ class LDMTrainer:
                     best_val_loss_path = os.path.join(best_checkpoint_path, "best_val_loss.pt")
                     torch.save(torch.tensor(self.best_val_loss), best_val_loss_path)
                     
+                    # 保存训练状态
+                    training_state_path = os.path.join(best_checkpoint_path, "training_state.pt")
+                    torch.save({
+                        "epoch": epoch,
+                        "global_step": global_step,
+                        "best_val_loss": self.best_val_loss,
+                        "best_val_loss_epoch": best_val_loss_epoch,
+                    }, training_state_path)
+                    
                     print(f"新的最佳模型已保存到 {best_checkpoint_path} (验证损失: {self.best_val_loss:.6f})")
                     
                     if self.args.use_wandb:
-                        self.accelerator.log({"best_val_loss": self.best_val_loss}, step=global_step)
+                        self.accelerator.log({
+                            "best_val_loss": self.best_val_loss,
+                            "best_val_loss_epoch": best_val_loss_epoch
+                        }, step=global_step)
                 else:
                     self.early_stop_counter += 1
                     print(f"验证损失未改善。早停计数器: {self.early_stop_counter}/{self.early_stop_patience}")
@@ -412,6 +484,16 @@ class LDMTrainer:
                 
                 self.accelerator.save_state(save_path)
                 pipeline.save_pretrained(pipeline_path)
+                
+                # 保存训练状态
+                training_state_path = os.path.join(save_path, "training_state.pt")
+                torch.save({
+                    "epoch": epoch,
+                    "global_step": global_step,
+                    "best_val_loss": self.best_val_loss,
+                    "best_val_loss_epoch": best_val_loss_epoch,
+                }, training_state_path)
+                
                 print(f"Epoch {epoch+1} 模型已保存到 {save_path}")
             
             if global_step >= self.num_train_steps:
@@ -450,7 +532,22 @@ class LDMTrainer:
             )
         
         pipeline.save_pretrained(self.output_dir)
+        
+        # 保存最终训练状态
+        final_training_state_path = os.path.join(self.output_dir, "training_state.pt")
+        torch.save({
+            "epoch": self.current_epoch,
+            "global_step": global_step,
+            "best_val_loss": self.best_val_loss,
+            "best_val_loss_epoch": best_val_loss_epoch,
+        }, final_training_state_path)
+        
         print(f"最终模型已保存到 {self.output_dir}")
         
         # 打印最佳验证结果
-        print(f"训练结束。最佳验证损失: {self.best_val_loss:.6f}") 
+        print(f"训练结束。最佳验证损失: {self.best_val_loss:.6f} (轮次 {best_val_loss_epoch+1})")
+        
+        # 显示最终GPU内存使用情况
+        if torch.cuda.is_available():
+            print(f"训练结束后GPU内存占用: {torch.cuda.memory_allocated() / (1024**2):.2f} MB")
+            print(f"训练过程中最大GPU内存占用: {torch.cuda.max_memory_allocated() / (1024**2):.2f} MB") 

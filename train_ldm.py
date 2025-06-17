@@ -20,7 +20,7 @@ except ImportError as e:
         raise e
 
 from dataset import get_dataloaders
-from ldm.models.mixed_attention_unet import create_mixed_attention_unet
+from ldm.models.unet import create_unet_model
 from ldm.trainers.ldm_trainer import LDMTrainer
 from ldm.utils.config import parse_args
 
@@ -52,12 +52,19 @@ def train_ldm(args):
     # 计算潜在空间大小
     latent_size = args.image_size // (2 ** (len(vq_model.config.down_block_types)))
     
-    # 创建混合注意力UNet模型
-    model = create_mixed_attention_unet(
+    # 创建纯自注意力UNet模型
+    print("\n使用纯自注意力UNet模型...\n")
+    model = create_unet_model(
         latent_size=latent_size, 
-        latent_channels=args.latent_channels,
-        window_size=8
+        latent_channels=args.latent_channels
     )
+    
+    # 监控初始显存占用
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+        print(f"初始GPU内存占用: {torch.cuda.memory_allocated() / (1024**2):.2f} MB")
+        print(f"初始GPU最大内存占用: {torch.cuda.max_memory_allocated() / (1024**2):.2f} MB")
     
     # 创建LDM训练器
     trainer = LDMTrainer(
@@ -69,6 +76,11 @@ def train_ldm(args):
         beta_schedule=args.beta_schedule
     )
     
+    # 监控模型和优化器分配后的显存
+    if torch.cuda.is_available():
+        print(f"模型加载后GPU内存占用: {torch.cuda.memory_allocated() / (1024**2):.2f} MB")
+        print(f"模型加载后GPU最大内存占用: {torch.cuda.max_memory_allocated() / (1024**2):.2f} MB")
+    
     # 如果指定了检查点路径，则从检查点恢复训练
     if args.resume_from_checkpoint:
         print(f"正在从检查点恢复训练: {args.resume_from_checkpoint}")
@@ -76,6 +88,11 @@ def train_ldm(args):
     
     # 开始训练
     trainer.train()
+    
+    # 训练结束后显示最终显存使用情况
+    if torch.cuda.is_available():
+        print(f"训练后GPU内存占用: {torch.cuda.memory_allocated() / (1024**2):.2f} MB")
+        print(f"训练过程中最大GPU内存占用: {torch.cuda.max_memory_allocated() / (1024**2):.2f} MB")
 
 if __name__ == "__main__":
     args = parse_args()
