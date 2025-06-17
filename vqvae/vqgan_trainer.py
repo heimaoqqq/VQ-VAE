@@ -61,6 +61,7 @@ class VQGANTrainer:
         recon_images = self.vqgan.decode(quant_states).sample
 
         perplexity = vq_info[1]
+        perplexity_item = perplexity.item() if perplexity is not None else -1.0
         
         # ====================================================
         # 1. Train the Discriminator
@@ -112,7 +113,7 @@ class VQGANTrainer:
             "recon_loss": recon_loss.item(),
             "adv_g_loss": g_loss_adv.item(),
             "commitment_loss": commitment_loss.item(),
-            "perplexity": perplexity.item(),
+            "perplexity": perplexity_item,
             "d_loss_real": d_loss_real.item(),
             "d_loss_fake": d_loss_fake.item(),
             "gradient_penalty": gradient_penalty.item(),
@@ -132,6 +133,7 @@ class VQGANTrainer:
         recon_images = self.vqgan.decode(quant_states).sample
 
         perplexity = vq_info[1]
+        perplexity_item = perplexity.item() if perplexity is not None else -1.0
 
         recon_loss_l1 = F.l1_loss(recon_images, images)
         recon_loss_perceptual = self.perceptual_loss(recon_images, images)
@@ -140,7 +142,7 @@ class VQGANTrainer:
         return {
             "val_recon_loss": recon_loss.item(),
             "val_commitment_loss": commitment_loss.item(),
-            "val_perplexity": perplexity.item()
+            "val_perplexity": perplexity_item
         }
 
     def train_step_fp16(self, images, vq_scaler, disc_scaler):
