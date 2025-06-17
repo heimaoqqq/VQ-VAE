@@ -54,7 +54,7 @@ def main(config):
     # Create output directory for checkpoints
     checkpoints_dir = os.path.join(config.output_dir, "checkpoints")
     os.makedirs(checkpoints_dir, exist_ok=True)
-    checkpoint_path = os.path.join(checkpoints_dir, "vqgan_checkpoint.pt")
+    checkpoint_path = os.path.join(checkpoints_dir, "checkpoint.pt")
     
     # Create Trainer
     trainer = VQGANTrainer(
@@ -67,9 +67,9 @@ def main(config):
         device=device,
         use_amp=use_amp,
         checkpoint_path=checkpoint_path,
-        lambda_gp=config.gp_weight,
         l1_weight=config.l1_weight,
-        perceptual_weight=config.perceptual_weight
+        perceptual_weight=config.perceptual_weight,
+        lambda_gp=config.gp_weight
     )
 
     # Start training
