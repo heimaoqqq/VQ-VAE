@@ -34,7 +34,6 @@ def main(config):
     model = CustomVQGAN(
         in_channels=3, 
         out_channels=3,
-        block_out_channels=[128, 256, 512],
         embed_dim=config.vq_embed_dim,
         n_embed=config.vq_num_embed,
         commitment_loss_beta=config.commitment_loss_beta

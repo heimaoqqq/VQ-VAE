@@ -10,7 +10,7 @@ class CustomVQGAN(nn.Module):
         self,
         in_channels: int = 3,
         out_channels: int = 3,
-        block_out_channels = [128, 256, 512],
+        block_out_channels: list = [64, 128, 256],
         layers_per_block: int = 2,
         latent_channels: int = 256,
         n_embed: int = 8192,
