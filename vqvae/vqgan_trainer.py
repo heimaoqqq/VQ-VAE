@@ -44,13 +44,12 @@ class VQGANTrainer:
     def _train_batch(self, batch):
         real_imgs = batch
         
-        # VQGAN forward pass to get reconstructed images and losses
         with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
-            # Manually perform the forward pass to access the commitment loss from the quantizer
-            h = self.vqgan.encoder(real_imgs)
-            h = self.vqgan.quant_conv(h)
-            quant, commitment_loss, (_, _, indices) = self.vqgan.quantize(h)
-            decoded_imgs = self.vqgan.decoder(self.vqgan.post_quant_conv(quant))
+            # The model's forward pass now returns a dictionary with all necessary components.
+            model_output = self.vqgan(real_imgs, return_dict=True)
+            decoded_imgs = model_output["decoded_imgs"]
+            commitment_loss = model_output["commitment_loss"]
+            indices = model_output["indices"]
 
             l1_loss = F.l1_loss(decoded_imgs, real_imgs)
             perceptual_loss = self.perceptual_loss(decoded_imgs, real_imgs).mean()
@@ -113,11 +112,11 @@ class VQGANTrainer:
     def _validate_batch(self, batch):
         real_imgs = batch
         with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
-            # Manually perform the forward pass to access the commitment loss from the quantizer
-            h = self.vqgan.encoder(real_imgs)
-            h = self.vqgan.quant_conv(h)
-            quant, commitment_loss, (_, _, indices) = self.vqgan.quantize(h)
-            decoded_imgs = self.vqgan.decoder(self.vqgan.post_quant_conv(quant))
+            # The model's forward pass returns a dictionary.
+            model_output = self.vqgan(real_imgs, return_dict=True)
+            decoded_imgs = model_output["decoded_imgs"]
+            commitment_loss = model_output["commitment_loss"]
+            indices = model_output["indices"]
 
             l1_loss = F.l1_loss(decoded_imgs, real_imgs)
             perceptual_loss = self.perceptual_loss(decoded_imgs, real_imgs).mean()

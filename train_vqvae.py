@@ -6,8 +6,9 @@ import os
 import torch
 from torch.utils.data import DataLoader, random_split
 from torch.optim.lr_scheduler import StepLR
+import itertools
 
-from diffusers import VQModel
+from vqvae.custom_vqgan import CustomVQGAN
 from vqvae.discriminator import Discriminator
 from vqvae.vqgan_trainer import VQGANTrainer
 from dataset import MicroDopplerDataset
@@ -29,22 +30,29 @@ def main(config):
     val_loader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False, num_workers=4, pin_memory=True)
     print(f"Training set size: {len(train_dataset)}, Validation set size: {len(val_dataset)}")
 
-    # Create VQ-GAN model (Generator part)
-    model = VQModel(
-        in_channels=3, out_channels=3,
-        down_block_types=["DownEncoderBlock2D"] * 3,
-        up_block_types=["UpDecoderBlock2D"] * 3,
+    # Create VQ-GAN model using our custom implementation
+    model = CustomVQGAN(
+        in_channels=3, 
+        out_channels=3,
         block_out_channels=[128, 256, 512],
-        latent_channels=config.vq_embed_dim,
+        latent_channels=config.vq_embed_dim, # This is the channel depth of the encoder's output
         num_vq_embeddings=config.vq_num_embed,
-        vq_embed_dim=config.vq_embed_dim,
+        vq_embed_dim=config.vq_embed_dim # This is the dimension of each codebook vector
     ).to(device)
     
     # Create Discriminator
     discriminator = Discriminator(input_channels=3, n_layers=3, n_filters_start=config.disc_channels).to(device)
 
     # Optimizers for Generator (VQ-Model) and Discriminator
-    optimizer_g = torch.optim.Adam(model.parameters(), lr=config.lr, betas=(config.beta1, config.beta2))
+    # IMPORTANT: We exclude the codebook parameters from the generator's optimizer,
+    # as it will be updated by EMA.
+    encoder_decoder_params = itertools.chain(
+        model.encoder.parameters(),
+        model.decoder.parameters(),
+        model.quant_conv.parameters(),
+        model.post_quant_conv.parameters()
+    )
+    optimizer_g = torch.optim.Adam(encoder_decoder_params, lr=config.lr, betas=(config.beta1, config.beta2))
     optimizer_d = torch.optim.Adam(discriminator.parameters(), lr=config.lr_d, betas=(config.beta1, config.beta2))
     
     # Learning Rate Schedulers

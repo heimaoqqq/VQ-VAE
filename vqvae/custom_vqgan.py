@@ -10,15 +10,26 @@ class CustomVQGAN(nn.Module):
         self,
         in_channels: int = 3,
         out_channels: int = 3,
-        block_out_channels = [64, 128, 256],
+        block_out_channels = [128, 256, 512],
         layers_per_block: int = 2,
-        latent_channels: int = 4,
+        latent_channels: int = 256,
         num_vq_embeddings: int = 8192,
+        vq_embed_dim: int = 256,
+        use_ema: bool = True,
+        ema_decay: float = 0.995,
+        # Legacy parameter name for older diffusers versions
+        n_e: int = None,
     ):
         super().__init__()
+        
+        # Handle legacy parameter name for num_vq_embeddings
+        if n_e is not None:
+            num_vq_embeddings = n_e
 
-        # Pass latent_channels to vq_embed_dim
-        vq_embed_dim = latent_channels
+        # The dimension of the VQ embedding (codebook vectors) must match the latent channels from the encoder.
+        # This was a source of error previously.
+        if vq_embed_dim != latent_channels:
+             raise ValueError(f"Latent channels from encoder ({latent_channels}) must match VQ embedding dimension ({vq_embed_dim}).")
 
         # Encoder
         self.encoder = Encoder(
@@ -29,35 +40,38 @@ class CustomVQGAN(nn.Module):
             layers_per_block=layers_per_block,
         )
 
-        # Vector Quantizer
+        # Vector Quantizer with EMA enabled
+        # We try to use the modern `use_ema` parameter, but will rely on `decay` for older versions.
         self.quantize = VectorQuantizer(
-            n_e=num_vq_embeddings,
-            vq_embed_dim=vq_embed_dim,
+            num_embeddings=num_vq_embeddings,
+            embedding_dim=vq_embed_dim,
             beta=0.25,
+            commitment_cost=0.25, # Often named beta or commitment_cost
+            use_ema=use_ema,
+            decay=ema_decay
         )
 
         # Decoder
         self.decoder = Decoder(
-            in_channels=latent_channels,
+            in_channels=vq_embed_dim, # Decoder input must be vq_embed_dim
             out_channels=out_channels,
             up_block_types=["UpDecoderBlock2D"] * len(block_out_channels),
             block_out_channels=block_out_channels,
             layers_per_block=layers_per_block,
         )
 
-        # The VQModel from diffusers has these two conv layers before and after quantization
-        self.quant_conv = nn.Conv2d(latent_channels, latent_channels, 1)
-        self.post_quant_conv = nn.Conv2d(latent_channels, latent_channels, 1)
+        self.quant_conv = nn.Conv2d(latent_channels, vq_embed_dim, 1)
+        self.post_quant_conv = nn.Conv2d(vq_embed_dim, vq_embed_dim, 1)
+
+        # To access config values in the trainer
+        self.config = {
+            "num_vq_embeddings": num_vq_embeddings,
+            "vq_embed_dim": vq_embed_dim
+        }
+
 
     def encode(self, x):
         h = self.encoder(x)
-        
-        # The underlying Encoder class from diffusers seems to be designed for AutoencoderKL
-        # and doubles the output channels (for mean and logvar). We only need the "mean"
-        # part for VQ-GAN, so we split the channels and take the first half.
-        if h.shape[1] == 2 * self.quant_conv.in_channels:
-             h, _ = h.chunk(2, dim=1)
-
         h = self.quant_conv(h)
         return h
 
@@ -71,27 +85,31 @@ class CustomVQGAN(nn.Module):
         h = self.encode(x)
         
         # 2. Quantize
-        # The diffusers VQ returns a tuple: (quant_states, vq_loss, (perplexity, min_encoding_indices, min_encodings))
         quant_states, vq_loss, perplexity_info = self.quantize(h)
-        # From diagnostics, we know perplexity is the first element of the inner tuple
-        perplexity = perplexity_info[0]
+        
+        # The returned vq_loss is often a dictionary in newer diffusers
+        if isinstance(vq_loss, dict):
+            commitment_loss = vq_loss.get('commitment_loss', torch.tensor(0.0, device=x.device))
+        else: # Or a simple tensor
+            commitment_loss = vq_loss
+
+        # Perplexity should be available in the third element of the tuple
+        perplexity = perplexity_info[0] if perplexity_info is not None and len(perplexity_info) > 0 else torch.tensor(0.0)
+        # We also need the indices for codebook usage calculation
+        indices = perplexity_info[2] if perplexity_info is not None and len(perplexity_info) > 2 else torch.tensor([], dtype=torch.long)
         
         # 3. Decode
         reconstructed_x = self.decode(quant_states)
 
-        # 4. Calculate losses
-        reconstruction_loss = nn.functional.l1_loss(reconstructed_x, x)
-        total_loss = reconstruction_loss + vq_loss
-
         if not return_dict:
-            return (reconstructed_x, total_loss, perplexity)
+            # This tuple format is for simple inference, not training
+            return (reconstructed_x, commitment_loss, perplexity)
 
+        # The dictionary format is more descriptive and is what the trainer will now use
         return {
-            "sample": reconstructed_x,
-            "loss": total_loss,
-            "reconstruction_loss": reconstruction_loss,
-            "vq_loss": vq_loss,
-            "perplexity": perplexity
+            "decoded_imgs": reconstructed_x,
+            "commitment_loss": commitment_loss,
+            "indices": indices,
         }
 
 @dataclass
