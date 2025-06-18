@@ -131,9 +131,13 @@ class VQGANTrainer:
         for i, batch in enumerate(pbar):
             batch_metrics = self._train_batch(batch) if is_train else self._validate_batch(batch)
             
-            if not is_train and i == 0: # Save first batch of val images
-                all_samples['originals'].append(batch_metrics.pop('originals').cpu())
-                all_samples['reconstructions'].append(batch_metrics.pop('reconstructions').cpu())
+            if not is_train:
+                # Always pop image tensors, but only store for the first batch
+                originals = batch_metrics.pop('originals')
+                reconstructions = batch_metrics.pop('reconstructions')
+                if i == 0: 
+                    all_samples['originals'].append(originals.cpu())
+                    all_samples['reconstructions'].append(reconstructions.cpu())
 
             # Now, batch_metrics only contains scalar metrics
             for key, val in batch_metrics.items():
