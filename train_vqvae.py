@@ -73,7 +73,8 @@ def main(config):
         lambda_gp=config.gp_weight,
         l1_weight=config.l1_weight,
         perceptual_weight=config.perceptual_weight,
-        adversarial_weight=config.adversarial_weight
+        adversarial_weight=config.adversarial_weight,
+        log_interval=config.log_interval
     )
 
     # Start training
@@ -97,6 +98,7 @@ if __name__ == '__main__':
     parser.add_argument('--beta2', type=float, default=0.9, help='Adam beta2')
     parser.add_argument('--epochs', type=int, default=300, help='Number of training epochs')
     parser.add_argument('--lr_decay_step', type=int, default=100, help='Step size for LR decay')
+    parser.add_argument('--log_interval', type=int, default=200, help='How many batches to wait before logging training status')
         
     # Model params
     parser.add_argument('--vq_embed_dim', type=int, default=256, help='Dimension of the codebook embeddings')

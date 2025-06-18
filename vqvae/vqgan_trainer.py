@@ -9,7 +9,7 @@ from lpips import LPIPS
 from torchvision.utils import save_image
 
 class VQGANTrainer:
-    def __init__(self, vqgan, discriminator, g_optimizer, d_optimizer, lr_scheduler_g, lr_scheduler_d, device, use_amp, checkpoint_path, sample_dir, lambda_gp=10.0, l1_weight=1.0, perceptual_weight=1.0, adversarial_weight=0.8):
+    def __init__(self, vqgan, discriminator, g_optimizer, d_optimizer, lr_scheduler_g, lr_scheduler_d, device, use_amp, checkpoint_path, sample_dir, lambda_gp=10.0, l1_weight=1.0, perceptual_weight=1.0, adversarial_weight=0.8, log_interval=50):
         self.vqgan = vqgan
         self.discriminator = discriminator
         self.g_optimizer = g_optimizer
@@ -30,6 +30,7 @@ class VQGANTrainer:
 
         self.best_val_loss = float('inf')
         self.start_epoch = 1
+        self.log_interval = log_interval
         
         # Initialize LPIPS loss
         self.perceptual_loss = LPIPS(net='vgg').to(self.device).eval()
@@ -131,9 +132,9 @@ class VQGANTrainer:
 
     def _get_short_metric_names(self):
         return {
-            'L1': 'L1', 'Perceptual': 'Perc', 'Adv': 'G_adv', 'Commit': 'Commit',
-            'D': 'D_loss', 'D_real': 'D_r', 'D_fake': 'D_f', 'GP': 'GP',
-            'CodebookUsage': 'Usage(%)'
+            'L1': 'L1', 'Perceptual': 'P', 'Adv': 'Adv', 'Commit': 'C',
+            'D': 'D', 'D_real': 'Dr', 'D_fake': 'Df', 'GP': 'GP',
+            'CodebookUsage': 'U(%)'
         }
 
     def _format_metrics(self, metrics, short_names=False):
@@ -143,12 +144,12 @@ class VQGANTrainer:
             if val == 0 and key in ['Adv', 'D', 'D_real', 'D_fake', 'GP']: # Don't show GAN metrics in validation summary
                 continue
             name = name_map.get(key, key)
-            # Format usage as percentage with 2 decimal points
+            # Format usage as percentage with 1 decimal point for brevity
             if key == 'CodebookUsage':
-                log_str.append(f"{name}={val:.2f}")
+                log_str.append(f"{name}={val:.1f}")
             else:
-                log_str.append(f"{name}={val:.4f}")
-        return ', '.join(log_str)
+                log_str.append(f"{name}={val:.3f}")
+        return ','.join(log_str) # Use comma without space for more compact logging
 
     def _run_epoch(self, dataloader, is_train, epoch, num_epochs):
         phase = "Train" if is_train else "Validation"
@@ -188,7 +189,13 @@ class VQGANTrainer:
                 epoch_metrics[key] = epoch_metrics.get(key, 0) + val
 
             progress_bar.set_postfix_str(self._format_metrics(batch_metrics, short_names=True))
-        
+            
+            # Periodically log full metrics on a new line during training
+            is_last_batch = (i + 1) == len(dataloader)
+            if is_train and ((i + 1) % self.log_interval == 0 or is_last_batch):
+                full_log_str = self._format_metrics(batch_metrics, short_names=False)
+                progress_bar.write(f"  [Batch {i+1}/{len(dataloader)}] {full_log_str}")
+
         avg_metrics = {key: val / len(dataloader) for key, val in epoch_metrics.items()}
         
         # Calculate and add codebook usage to the summary
