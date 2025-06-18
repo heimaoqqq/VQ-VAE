@@ -35,9 +35,8 @@ def main(config):
         in_channels=3, 
         out_channels=3,
         block_out_channels=[128, 256, 512],
-        latent_channels=config.vq_embed_dim,
-        num_vq_embeddings=config.vq_num_embed,
-        vq_embed_dim=config.vq_embed_dim,
+        embed_dim=config.vq_embed_dim,
+        n_embed=config.vq_num_embed,
         commitment_loss_beta=config.commitment_loss_beta
     ).to(device)
     
