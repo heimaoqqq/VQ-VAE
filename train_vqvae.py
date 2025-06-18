@@ -6,7 +6,6 @@ import os
 import torch
 from torch.utils.data import DataLoader, random_split
 from torch.optim.lr_scheduler import StepLR
-import wandb
 
 from diffusers import VQModel
 from vqvae.discriminator import Discriminator
@@ -56,6 +55,8 @@ def main(config):
     os.makedirs(config.output_dir, exist_ok=True)
     # The trainer will save the best model to this path
     checkpoint_path = os.path.join(config.output_dir, "vqgan_model_best.pt")
+    sample_dir = os.path.join(config.output_dir, "samples")
+    os.makedirs(sample_dir, exist_ok=True)
     
     # Create Trainer
     trainer = VQGANTrainer(
@@ -68,6 +69,7 @@ def main(config):
         device=device,
         use_amp=use_amp,
         checkpoint_path=checkpoint_path,
+        sample_dir=sample_dir,
         lambda_gp=config.gp_weight,
         l1_weight=config.l1_weight,
         perceptual_weight=config.perceptual_weight,
@@ -110,9 +112,6 @@ if __name__ == '__main__':
             
     # Dataset params
     parser.add_argument('--val_split_ratio', type=float, default=0.05, help='Ratio of dataset to be used for validation')
-            
-    # Wandb params
-    parser.add_argument('--use_wandb', action='store_true', help='Use wandb for logging')
 
     config = parser.parse_args()
     main(config) 
