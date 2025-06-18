@@ -68,7 +68,8 @@ class VQGANTrainer:
             d_loss_fake = fake_output.mean()
         
         # Gradient penalty calculation should be in float32 for stability
-        gradient_penalty = self.compute_gradient_penalty(real_imgs, decoded_imgs.detach())
+        # Explicitly cast inputs to float32 to ensure stability under AMP
+        gradient_penalty = self.compute_gradient_penalty(real_imgs.to(torch.float32), decoded_imgs.detach().to(torch.float32))
         
         # Final discriminator loss, combining components.
         # The addition happens in float32.
