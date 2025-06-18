@@ -13,15 +13,15 @@ class CustomVQGAN(nn.Module):
         block_out_channels = [128, 256, 512],
         layers_per_block: int = 2,
         latent_channels: int = 256,
-        num_vq_embeddings: int = 8192,
-        vq_embed_dim: int = 256,
+        n_embed: int = 8192,
+        embed_dim: int = 256,
         ema_decay: float = 0.995,
-        commitment_cost: float = 0.25,
+        commitment_loss_beta: float = 0.25,
     ):
         super().__init__()
         
-        if vq_embed_dim != latent_channels:
-             raise ValueError(f"Latent channels from encoder ({latent_channels}) must match VQ embedding dimension ({vq_embed_dim}).")
+        if embed_dim != latent_channels:
+             raise ValueError(f"Latent channels from encoder ({latent_channels}) must match VQ embedding dimension ({embed_dim}).")
 
         # Encoder
         self.encoder = Encoder(
@@ -34,28 +34,28 @@ class CustomVQGAN(nn.Module):
 
         # Our new, reliable EMA Vector Quantizer
         self.quantize = EMAVectorQuantizer(
-            num_embeddings=num_vq_embeddings,
-            embedding_dim=vq_embed_dim,
-            commitment_cost=commitment_cost,
+            num_embeddings=n_embed,
+            embedding_dim=embed_dim,
+            commitment_cost=commitment_loss_beta,
             decay=ema_decay
         )
 
         # Decoder
         self.decoder = Decoder(
-            in_channels=vq_embed_dim, # Decoder input must be vq_embed_dim
+            in_channels=embed_dim,
             out_channels=out_channels,
             up_block_types=["UpDecoderBlock2D"] * len(block_out_channels),
             block_out_channels=block_out_channels,
             layers_per_block=layers_per_block,
         )
 
-        self.quant_conv = nn.Conv2d(latent_channels, vq_embed_dim, 1)
-        self.post_quant_conv = nn.Conv2d(vq_embed_dim, vq_embed_dim, 1)
+        self.quant_conv = nn.Conv2d(latent_channels, embed_dim, 1)
+        self.post_quant_conv = nn.Conv2d(embed_dim, embed_dim, 1)
 
         # To access config values in the trainer
         self.config = {
-            "num_vq_embeddings": num_vq_embeddings,
-            "vq_embed_dim": vq_embed_dim
+            "num_vq_embeddings": n_embed,
+            "vq_embed_dim": embed_dim
         }
 
 
@@ -116,7 +116,7 @@ class VQGANConfig:
     block_out_channels: Tuple[int] = (128, 256, 256, 512)
     layers_per_block: int = 2
     latent_channels: int = 256
-    num_vq_embeddings: int = 1024,
+    num_vq_embeddings: int = 1024
     vq_embed_dim: int = 256
     scaling_factor: float = 0.18215
     # Discriminator

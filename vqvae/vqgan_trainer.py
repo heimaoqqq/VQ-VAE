@@ -32,244 +32,152 @@ class VQGANTrainer:
         self.start_epoch = 1
         self.log_interval = log_interval
         
+        # Early stopping attributes
+        self.early_stopping_counter = 0
+        
         # Initialize LPIPS loss
         self.perceptual_loss = LPIPS(net='vgg').to(self.device).eval()
         for param in self.perceptual_loss.parameters():
             param.requires_grad = False
 
         # AMP Scalers
-        self.g_scaler = torch.amp.GradScaler(enabled=self.use_amp)
-        self.d_scaler = torch.amp.GradScaler(enabled=self.use_amp)
+        self.g_scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
+        self.d_scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
 
     def _train_batch(self, batch):
-        real_imgs = batch
+        real_imgs, _ = batch
+        real_imgs = real_imgs.to(self.device)
         
-        with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
-            # The model's forward pass now returns a dictionary with all necessary components.
-            model_output = self.vqgan(real_imgs, return_dict=True)
-            decoded_imgs = model_output["decoded_imgs"]
-            commitment_loss = model_output["commitment_loss"]
-            indices = model_output["indices"]
-            perplexity = model_output["perplexity"]
-
-            l1_loss = F.l1_loss(decoded_imgs, real_imgs)
-            perceptual_loss = self.perceptual_loss(decoded_imgs, real_imgs).mean()
-
-        # ====================================================
-        # 1. Train the Discriminator
-        # ====================================================
+        # --- Train Discriminator ---
         self.d_optimizer.zero_grad()
-
-        with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
-            real_output = self.discriminator(real_imgs)
-            d_loss_real = real_output.mean()
+        with torch.cuda.amp.autocast(enabled=self.use_amp):
+            # We only need the decoded images for the discriminator, so we detach them
+            decoded_imgs_detached = self.vqgan(real_imgs, return_dict=True)["decoded_imgs"].detach()
             
-            fake_output = self.discriminator(decoded_imgs.detach())
-            d_loss_fake = fake_output.mean()
-        
-        # Gradient penalty calculation should be in float32 for stability
-        # Explicitly cast inputs to float32 to ensure stability under AMP
-        gradient_penalty = self.compute_gradient_penalty(real_imgs.to(torch.float32), decoded_imgs.detach().to(torch.float32))
-        
-        # Final discriminator loss, combining components.
-        # The addition happens in float32.
-        d_loss = d_loss_fake - d_loss_real + self.lambda_gp * gradient_penalty
-
+            real_output = self.discriminator(real_imgs)
+            fake_output = self.discriminator(decoded_imgs_detached)
+            
+            gradient_penalty = self.compute_gradient_penalty(real_imgs, decoded_imgs_detached)
+            d_loss = fake_output.mean() - real_output.mean() + self.lambda_gp * gradient_penalty
+            
         self.d_scaler.scale(d_loss).backward()
         self.d_scaler.step(self.d_optimizer)
         self.d_scaler.update()
 
-        # ====================================================
-        # 2. Train the Generator (VQ-GAN)
-        # ====================================================
+        # --- Train Generator ---
         self.g_optimizer.zero_grad()
-        
-        with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
-            # Adversarial Loss from discriminator's perspective on the new reconstructions
+        with torch.cuda.amp.autocast(enabled=self.use_amp):
+            # Forward pass for generator
+            vqgan_output = self.vqgan(real_imgs, return_dict=True)
+            decoded_imgs = vqgan_output["decoded_imgs"]
+            commitment_loss = vqgan_output["commitment_loss"]
+            perplexity = vqgan_output["perplexity"]
+            
+            # Reconstruction losses
+            l1_loss = F.l1_loss(decoded_imgs, real_imgs)
+            perceptual_loss = self.perceptual_loss(decoded_imgs, real_imgs).mean()
+            
+            # Adversarial loss
             g_output = self.discriminator(decoded_imgs)
             g_loss_adv = -g_output.mean()
             
-            # Total Generator Loss
-            g_loss = self.l1_weight * l1_loss + self.perceptual_weight * perceptual_loss + self.adversarial_weight * g_loss_adv + commitment_loss
+            # Combine all losses for the generator
+            # The commitment loss is already scaled by its beta inside the VQGAN model
+            g_loss = (self.l1_weight * l1_loss + 
+                      self.perceptual_weight * perceptual_loss + 
+                      self.adversarial_weight * g_loss_adv + 
+                      commitment_loss) # Directly add the commitment loss
 
         self.g_scaler.scale(g_loss).backward()
         self.g_scaler.step(self.g_optimizer)
         self.g_scaler.update()
 
         return {
-            'L1': l1_loss.item(),
-            'Perceptual': perceptual_loss.item(),
-            'Adv': g_loss_adv.item(),
-            'Commit': commitment_loss.item(),
-            'Perplexity': perplexity.item(),
-            'D': d_loss.item(),
-            'D_real': d_loss_real.item(),
-            'D_fake': d_loss_fake.item(),
-            'GP': gradient_penalty.item(),
-            'indices': indices,
-            'original_images': real_imgs, # Keep original images for visualization
-            'decoded_images': decoded_imgs, # Keep decoded images for visualization
+            'L1': l1_loss.item(), 'Perceptual': perceptual_loss.item(), 'Adv': g_loss_adv.item(),
+            'Commit': commitment_loss.item(), 'Perplexity': perplexity.item(), 'D': d_loss.item()
         }
 
     def _validate_batch(self, batch):
-        real_imgs = batch
-        with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
-            # The model's forward pass returns a dictionary.
-            model_output = self.vqgan(real_imgs, return_dict=True)
-            decoded_imgs = model_output["decoded_imgs"]
-            commitment_loss = model_output["commitment_loss"]
-            indices = model_output["indices"]
-            perplexity = model_output["perplexity"]
-
-            l1_loss = F.l1_loss(decoded_imgs, real_imgs)
-            perceptual_loss = self.perceptual_loss(decoded_imgs, real_imgs).mean()
-
+        real_imgs, _ = batch
+        real_imgs = real_imgs.to(self.device)
+        with torch.no_grad():
+            with torch.cuda.amp.autocast(enabled=self.use_amp):
+                vqgan_output = self.vqgan(real_imgs, return_dict=True)
+                decoded_imgs = vqgan_output["decoded_imgs"]
+                commitment_loss = vqgan_output["commitment_loss"]
+                perplexity = vqgan_output["perplexity"]
+                
+                l1_loss = F.l1_loss(decoded_imgs, real_imgs)
+                perceptual_loss = self.perceptual_loss(decoded_imgs, real_imgs).mean()
+                
         return {
-            'L1': l1_loss.item(),
-            'Perceptual': perceptual_loss.item(),
-            'Commit': commitment_loss.item(),
-            'Perplexity': perplexity.item(),
-            'indices': indices,
-            'original_images': real_imgs, # Keep original images for visualization
-            'decoded_images': decoded_imgs, # Keep decoded images for visualization
+            'L1': l1_loss.item(), 'Perceptual': perceptual_loss.item(),
+            'Commit': commitment_loss.item(), 'Perplexity': perplexity.item(),
+            'originals': real_imgs, 'reconstructions': decoded_imgs.clamp(0, 1) # Clamp for valid image range
         }
 
-    def _get_short_metric_names(self):
-        return {
-            'L1': 'L1', 'Perceptual': 'P', 'Adv': 'Adv', 'Commit': 'C',
-            'Perplexity': 'Perp', 'D': 'D', 'D_real': 'Dr', 'D_fake': 'Df', 'GP': 'GP',
-            'CodebookUsage': 'U(%)'
-        }
-
-    def _format_metrics(self, metrics, short_names=False):
-        name_map = self._get_short_metric_names() if short_names else {}
-        log_str = []
-        for key, val in metrics.items():
-            if val == 0 and key in ['Adv', 'D', 'D_real', 'D_fake', 'GP']: # Don't show GAN metrics in validation summary
-                continue
-            name = name_map.get(key, key)
-            # Format usage as percentage with 1 decimal point for brevity
-            if key == 'CodebookUsage' or key == 'Perplexity':
-                log_str.append(f"{name}={val:.1f}")
-            else:
-                log_str.append(f"{name}={val:.3f}")
-        return ','.join(log_str) # Use comma without space for more compact logging
-
-    def _run_epoch(self, dataloader, is_train, epoch, num_epochs, smoke_test=False):
+    def _run_epoch(self, dataloader, is_train, epoch, num_epochs):
         phase = "Train" if is_train else "Validation"
         self.vqgan.train(is_train)
         self.discriminator.train(is_train)
         
         epoch_metrics = {}
-        used_indices = set()
-        
-        # We will store one batch of images from validation for visualization
-        sample_originals = None
-        sample_reconstructions = None
+        all_samples = {'originals': [], 'reconstructions': []}
 
-        progress_bar = tqdm(dataloader, desc=f"Epoch {epoch}/{num_epochs} [{phase}]", leave=False)
-
-        for i, (images, _) in enumerate(progress_bar):
-            # Smoke test logic: if enabled, only run for a few batches
-            if smoke_test and i >= 5:
-                print("\nSmoke test active: stopping epoch after 5 batches.")
-                break
-
-            images = images.to(self.device)
+        pbar = tqdm(dataloader, desc=f"Epoch {epoch}/{num_epochs} [{phase}]")
+        for i, batch in enumerate(pbar):
+            batch_metrics = self._train_batch(batch) if is_train else self._validate_batch(batch)
             
-            if is_train:
-                batch_metrics = self._train_batch(images)
-            else:
-                with torch.no_grad():
-                    batch_metrics = self._validate_batch(images)
-                    # For the first validation batch, store the images for saving later
-                    if i == 0:
-                        sample_originals = batch_metrics.pop('original_images')
-                        sample_reconstructions = batch_metrics.pop('decoded_images')
-        
-            # Update used indices and remove from metrics dict to prevent aggregation
-            used_indices.update(torch.unique(batch_metrics.pop('indices')).tolist())
-            
-            # This logic needs to handle the case where visualization tensors are present
-            if 'original_images' in batch_metrics: batch_metrics.pop('original_images')
-            if 'decoded_images' in batch_metrics: batch_metrics.pop('decoded_images')
+            if not is_train and i == 0: # Save first batch of val images
+                all_samples['originals'].append(batch_metrics.pop('originals').cpu())
+                all_samples['reconstructions'].append(batch_metrics.pop('reconstructions').cpu())
 
             for key, val in batch_metrics.items():
                 epoch_metrics[key] = epoch_metrics.get(key, 0) + val
-
-            progress_bar.set_postfix_str(self._format_metrics(batch_metrics, short_names=True))
             
-            # Periodically log full metrics on a new line during training
-            is_last_batch = (i + 1) == len(dataloader)
-            if is_train and ((i + 1) % self.log_interval == 0 or is_last_batch):
-                full_log_str = self._format_metrics(batch_metrics, short_names=False)
-                progress_bar.write(f"  [Batch {i+1}/{len(dataloader)}] {full_log_str}")
+            pbar.set_postfix({k: f"{v:.3f}" for k, v in batch_metrics.items()})
 
-        num_batches_processed = i + 1
-        avg_metrics = {key: val / num_batches_processed for key, val in epoch_metrics.items()}
+        avg_metrics = {key: val / len(dataloader) for key, val in epoch_metrics.items()}
+        print(f"Epoch {epoch} [{phase}] Avg Metrics: " + ", ".join([f"{k}: {v:.4f}" for k, v in avg_metrics.items()]))
         
-        # Calculate and add codebook usage to the summary
-        codebook_usage = (len(used_indices) / self.vqgan.config['num_vq_embeddings']) * 100
-        avg_metrics['CodebookUsage'] = codebook_usage
-        
-        # Return samples if they exist (only in validation)
-        if not is_train:
-            return avg_metrics, (sample_originals, sample_reconstructions)
-        
-        return avg_metrics
+        return avg_metrics, all_samples
 
-    def _log_epoch_summary(self, epoch, num_epochs, avg_metrics, phase):
-        # For validation, we don't have GAN metrics. Create a clean dict for logging.
-        if phase == "Validation":
-            val_summary_metrics = {
-                'L1': avg_metrics.get('L1', 0),
-                'Perceptual': avg_metrics.get('Perceptual', 0),
-                'Commit': avg_metrics.get('Commit', 0),
-                'Perplexity': avg_metrics.get('Perplexity', 0),
-                'CodebookUsage': avg_metrics.get('CodebookUsage', 0),
-            }
-            log_message = f"Epoch {epoch}/{num_epochs} [{phase}] Summary: {self._format_metrics(val_summary_metrics)}"
-            print(log_message)
-        else:
-            log_message = f"Epoch {epoch}/{num_epochs} [{phase}] Summary: {self._format_metrics(avg_metrics)}"
-            print(log_message)
-
-    def train(self, train_loader, val_loader, epochs, smoke_test=False):
+    def train(self, train_loader, val_loader, epochs, early_stopping_patience=0, smoke_test=False):
         self.load_checkpoint()
         
-        # If smoke_test is active, we only run for 1 epoch
         if smoke_test:
             epochs = 1
-            print("--- Smoke test mode enabled: training will run for only 1 epoch with a few batches. ---")
+            print("--- Smoke test mode enabled: training will run for only 1 epoch. ---")
 
         for epoch in range(self.start_epoch, epochs + 1):
-            # Training phase
-            train_metrics = self._run_epoch(train_loader, is_train=True, epoch=epoch, num_epochs=epochs, smoke_test=smoke_test)
-            self._log_epoch_summary(epoch, epochs, train_metrics, "Train")
-
-            # Validation phase
-            val_metrics, val_samples = self._run_epoch(val_loader, is_train=False, epoch=epoch, num_epochs=epochs, smoke_test=smoke_test)
-            self._log_epoch_summary(epoch, epochs, val_metrics, "Validation")
+            train_metrics, _ = self._run_epoch(train_loader, is_train=True, epoch=epoch, num_epochs=epochs)
             
-            # Save visual samples from the validation phase
-            if val_samples[0] is not None:
-                self._save_sample_images(epoch, val_samples[0], val_samples[1])
+            val_metrics, val_samples = self._run_epoch(val_loader, is_train=False, epoch=epoch, num_epochs=epochs)
+            current_val_loss = val_metrics.get('Perceptual', float('inf'))
 
-            # Step LR schedulers
             if self.lr_scheduler_g: self.lr_scheduler_g.step()
             if self.lr_scheduler_d: self.lr_scheduler_d.step()
-        
-            # Save model checkpoint based on perceptual loss
-            current_val_loss = val_metrics.get('Perceptual', float('inf'))
+
+            # --- Checkpoint and Early Stopping ---
             if current_val_loss < self.best_val_loss:
-                print(f"Validation Perceptual loss improved from {self.best_val_loss:.4f} to {current_val_loss:.4f}. Saving best model...")
+                print(f"Validation loss improved from {self.best_val_loss:.4f} to {current_val_loss:.4f}. Saving model...")
                 self.best_val_loss = current_val_loss
                 self.save_checkpoint(epoch, is_best=True)
+                self.early_stopping_counter = 0
+            else:
+                self.early_stopping_counter += 1
+                print(f"Validation loss did not improve. Counter: {self.early_stopping_counter}/{early_stopping_patience}")
+            
+            if val_samples['originals']:
+                self._save_sample_images(epoch, torch.cat(val_samples['originals']), torch.cat(val_samples['reconstructions']))
+
+            if early_stopping_patience > 0 and self.early_stopping_counter >= early_stopping_patience:
+                print(f"Early stopping triggered after {epoch} epochs.")
+                break
+        
+        print("Training finished.")
 
     def save_checkpoint(self, epoch, is_best=False):
-        # Always save the latest checkpoint
-        latest_checkpoint_path = os.path.join(os.path.dirname(self.checkpoint_path), 'vqgan_checkpoint_latest.pth')
-        
         checkpoint = {
             'epoch': epoch,
             'best_val_loss': self.best_val_loss,
@@ -277,76 +185,59 @@ class VQGANTrainer:
             'discriminator_state_dict': self.discriminator.state_dict(),
             'g_optimizer_state_dict': self.g_optimizer.state_dict(),
             'd_optimizer_state_dict': self.d_optimizer.state_dict(),
-            'lr_scheduler_g_state_dict': self.lr_scheduler_g.state_dict() if self.lr_scheduler_g else None,
-            'lr_scheduler_d_state_dict': self.lr_scheduler_d.state_dict() if self.lr_scheduler_d else None,
+            'g_scheduler_state_dict': self.lr_scheduler_g.state_dict() if self.lr_scheduler_g else None,
+            'd_scheduler_state_dict': self.lr_scheduler_d.state_dict() if self.lr_scheduler_d else None,
             'g_scaler_state_dict': self.g_scaler.state_dict(),
-            'd_scaler_state_dict': self.d_scaler.state_dict()
+            'd_scaler_state_dict': self.d_scaler.state_dict(),
         }
         
-        torch.save(checkpoint, latest_checkpoint_path)
-        print(f"Saved latest checkpoint to {latest_checkpoint_path}")
-        
-        # If it's the best model, save it to the main checkpoint path
         if is_best:
             torch.save(checkpoint, self.checkpoint_path)
             print(f"Saved best model checkpoint to {self.checkpoint_path}")
 
     def _save_sample_images(self, epoch, originals, reconstructions):
-        # We'll save up to 8 images
         num_samples = min(originals.size(0), 8)
-        
-        # Create a side-by-side comparison
         comparison = torch.cat([originals[:num_samples], reconstructions[:num_samples]])
-        
-        # Save the image grid
         save_path = os.path.join(self.sample_dir, f'reconstruction_epoch_{epoch:04d}.png')
         save_image(comparison, save_path, nrow=num_samples, normalize=True)
-        print(f"Saved sample reconstructions to {save_path}")
 
     def load_checkpoint(self):
-        # Try to load the latest checkpoint first
-        latest_checkpoint_path = os.path.join(os.path.dirname(self.checkpoint_path), 'vqgan_checkpoint_latest.pth')
+        if not os.path.isfile(self.checkpoint_path):
+            print("No checkpoint found, starting from scratch.")
+            return
 
-        load_path = None
-        if os.path.isfile(latest_checkpoint_path):
-            load_path = latest_checkpoint_path
-        elif os.path.isfile(self.checkpoint_path):
-            # Fallback to the best model checkpoint if latest doesn't exist
-            load_path = self.checkpoint_path
-
-        if load_path and os.path.isfile(load_path):
-            print(f"Loading checkpoint from {load_path}")
-            checkpoint = torch.load(load_path, map_location=self.device)
-            
-            # Load states
-            self.vqgan.load_state_dict(checkpoint['vqgan_state_dict'])
-            self.discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
-            self.g_optimizer.load_state_dict(checkpoint['g_optimizer_state_dict'])
-            self.d_optimizer.load_state_dict(checkpoint['d_optimizer_state_dict'])
-            if self.lr_scheduler_g and checkpoint.get('lr_scheduler_g_state_dict'): self.lr_scheduler_g.load_state_dict(checkpoint['lr_scheduler_g_state_dict'])
-            if self.lr_scheduler_d and checkpoint.get('lr_scheduler_d_state_dict'): self.lr_scheduler_d.load_state_dict(checkpoint['lr_scheduler_d_state_dict'])
-            self.g_scaler.load_state_dict(checkpoint['g_scaler_state_dict'])
-            self.d_scaler.load_state_dict(checkpoint['d_scaler_state_dict'])
-            self.start_epoch = checkpoint['epoch'] + 1
-            self.best_val_loss = checkpoint['best_val_loss']
-            print(f"Resuming training from epoch {self.start_epoch}")
-        else:
-            print("No checkpoint found. Starting from scratch.")
+        print(f"Loading checkpoint from {self.checkpoint_path}")
+        checkpoint = torch.load(self.checkpoint_path, map_location=self.device)
+        
+        self.vqgan.load_state_dict(checkpoint['vqgan_state_dict'])
+        self.discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
+        self.g_optimizer.load_state_dict(checkpoint['g_optimizer_state_dict'])
+        self.d_optimizer.load_state_dict(checkpoint['d_optimizer_state_dict'])
+        
+        if self.lr_scheduler_g and 'g_scheduler_state_dict' in checkpoint:
+            self.lr_scheduler_g.load_state_dict(checkpoint['g_scheduler_state_dict'])
+        if self.lr_scheduler_d and 'd_scheduler_state_dict' in checkpoint:
+            self.lr_scheduler_d.load_state_dict(checkpoint['d_scheduler_state_dict'])
+        
+        self.g_scaler.load_state_dict(checkpoint['g_scaler_state_dict'])
+        self.d_scaler.load_state_dict(checkpoint['d_scaler_state_dict'])
+        
+        self.start_epoch = checkpoint['epoch'] + 1
+        self.best_val_loss = checkpoint.get('best_val_loss', float('inf'))
+        
+        print(f"Resuming training from epoch {self.start_epoch}")
 
     def compute_gradient_penalty(self, real_samples, fake_samples):
-        """Calculates the gradient penalty loss for WGAN GP. Always run in float32 for stability."""
-        alpha = torch.rand((real_samples.size(0), 1, 1, 1), device=self.device)
+        alpha = torch.rand(real_samples.size(0), 1, 1, 1, device=self.device)
         interpolates = (alpha * real_samples + ((1 - alpha) * fake_samples)).requires_grad_(True)
-        
         d_interpolates = self.discriminator(interpolates)
         
         gradients = torch.autograd.grad(
             outputs=d_interpolates,
             inputs=interpolates,
-            grad_outputs=torch.ones_like(d_interpolates, requires_grad=False), # Use torch.ones_like for safety
+            grad_outputs=torch.ones_like(d_interpolates),
             create_graph=True,
             retain_graph=True,
-            only_inputs=True,
         )[0]
         
         gradients = gradients.view(gradients.size(0), -1)
