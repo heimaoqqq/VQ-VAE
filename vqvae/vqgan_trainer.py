@@ -204,7 +204,7 @@ class VQGANTrainer:
         avg_metrics = {key: val / len(dataloader) for key, val in epoch_metrics.items()}
         
         # Calculate and add codebook usage to the summary
-        codebook_usage = (len(used_indices) / self.vqgan.config.num_vq_embeddings) * 100
+        codebook_usage = (len(used_indices) / self.vqgan.config['num_vq_embeddings']) * 100
         avg_metrics['CodebookUsage'] = codebook_usage
         
         # Return samples if they exist (only in validation)
