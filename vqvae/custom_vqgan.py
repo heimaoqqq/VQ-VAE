@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from diffusers.models.autoencoders.vae import Encoder, Decoder
-from diffusers.models.autoencoders.vq_model import VectorQuantizer
+from .ema_vector_quantizer import EMAVectorQuantizer
 from dataclasses import dataclass
 from typing import Tuple
 
@@ -15,19 +15,11 @@ class CustomVQGAN(nn.Module):
         latent_channels: int = 256,
         num_vq_embeddings: int = 8192,
         vq_embed_dim: int = 256,
-        use_ema: bool = True,
         ema_decay: float = 0.995,
-        # Legacy parameter name for older diffusers versions
-        n_e: int = None,
+        commitment_cost: float = 0.25,
     ):
         super().__init__()
         
-        # Handle legacy parameter name for num_vq_embeddings
-        if n_e is not None:
-            num_vq_embeddings = n_e
-
-        # The dimension of the VQ embedding (codebook vectors) must match the latent channels from the encoder.
-        # This was a source of error previously.
         if vq_embed_dim != latent_channels:
              raise ValueError(f"Latent channels from encoder ({latent_channels}) must match VQ embedding dimension ({vq_embed_dim}).")
 
@@ -40,14 +32,11 @@ class CustomVQGAN(nn.Module):
             layers_per_block=layers_per_block,
         )
 
-        # Vector Quantizer with EMA enabled
-        # We are switching to legacy parameter names (`n_e`, `e_dim`) to match
-        # the version of the diffusers library on your server. EMA is typically
-        # enabled by just providing a decay value in these older versions.
-        self.quantize = VectorQuantizer(
-            n_e=num_vq_embeddings,
-            e_dim=vq_embed_dim,
-            beta=0.25,
+        # Our new, reliable EMA Vector Quantizer
+        self.quantize = EMAVectorQuantizer(
+            num_embeddings=num_vq_embeddings,
+            embedding_dim=vq_embed_dim,
+            commitment_cost=commitment_cost,
             decay=ema_decay
         )
 
