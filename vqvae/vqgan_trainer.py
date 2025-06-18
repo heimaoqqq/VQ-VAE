@@ -323,12 +323,11 @@ class VQGANTrainer:
         interpolates = (alpha * real_samples + ((1 - alpha) * fake_samples)).requires_grad_(True)
         
         d_interpolates = self.discriminator(interpolates)
-        fake = torch.ones(d_interpolates.size(), device=self.device, requires_grad=False)
         
         gradients = torch.autograd.grad(
             outputs=d_interpolates,
             inputs=interpolates,
-            grad_outputs=fake,
+            grad_outputs=torch.ones_like(d_interpolates, requires_grad=False), # Use torch.ones_like for safety
             create_graph=True,
             retain_graph=True,
             only_inputs=True,
