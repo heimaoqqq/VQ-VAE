@@ -47,21 +47,22 @@ class EMAVectorQuantizer(nn.Module):
         
         # Use EMA to update the embedding vectors if in training mode
         if self.training:
-            self.ema_cluster_size = self.ema_cluster_size * self.decay + \
-                                  (1 - self.decay) * torch.sum(encodings, 0)
-            
-            # Laplace smoothing to avoid zero counts
-            n = torch.sum(self.ema_cluster_size.data)
-            self.ema_cluster_size = (
-                (self.ema_cluster_size + self.epsilon)
-                / (n + self.num_embeddings * self.epsilon)
-                * n
-            )
-            
-            dw = torch.matmul(encodings.t(), flat_input)
-            self.ema_w = self.ema_w * self.decay + (1 - self.decay) * dw
-            
-            self.embedding.weight.data.copy_(self.ema_w / self.ema_cluster_size.unsqueeze(1))
+            with torch.no_grad():
+                self.ema_cluster_size = self.ema_cluster_size * self.decay + \
+                                      (1 - self.decay) * torch.sum(encodings, 0)
+                
+                # Laplace smoothing to avoid zero counts
+                n = torch.sum(self.ema_cluster_size.data)
+                self.ema_cluster_size = (
+                    (self.ema_cluster_size + self.epsilon)
+                    / (n + self.num_embeddings * self.epsilon)
+                    * n
+                )
+                
+                dw = torch.matmul(encodings.t(), flat_input)
+                self.ema_w = self.ema_w * self.decay + (1 - self.decay) * dw
+                
+                self.embedding.weight.data.copy_(self.ema_w / self.ema_cluster_size.unsqueeze(1))
             
         # Calculate commitment loss
         commitment_loss = self.commitment_cost * F.mse_loss(quantized.detach(), inputs)
