@@ -87,7 +87,7 @@ def main(config):
 
     # Start training
     print("Starting training...")
-    trainer.train(train_loader, val_loader, config.epochs)
+    trainer.train(train_loader, val_loader, config.epochs, smoke_test=config.smoke_test)
     print("Training finished.")
 
 
@@ -122,6 +122,9 @@ if __name__ == '__main__':
             
     # Dataset params
     parser.add_argument('--val_split_ratio', type=float, default=0.05, help='Ratio of dataset to be used for validation')
+
+    # Utility params
+    parser.add_argument('--smoke-test', action='store_true', help='Run a quick smoke test with a few batches instead of a full training.')
 
     config = parser.parse_args()
     main(config) 

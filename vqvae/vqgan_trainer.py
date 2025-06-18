@@ -151,7 +151,7 @@ class VQGANTrainer:
                 log_str.append(f"{name}={val:.3f}")
         return ','.join(log_str) # Use comma without space for more compact logging
 
-    def _run_epoch(self, dataloader, is_train, epoch, num_epochs):
+    def _run_epoch(self, dataloader, is_train, epoch, num_epochs, smoke_test=False):
         phase = "Train" if is_train else "Validation"
         self.vqgan.train(is_train)
         self.discriminator.train(is_train)
@@ -166,6 +166,11 @@ class VQGANTrainer:
         progress_bar = tqdm(dataloader, desc=f"Epoch {epoch}/{num_epochs} [{phase}]", leave=False)
 
         for i, (images, _) in enumerate(progress_bar):
+            # Smoke test logic: if enabled, only run for a few batches
+            if smoke_test and i >= 5:
+                print("\nSmoke test active: stopping epoch after 5 batches.")
+                break
+
             images = images.to(self.device)
             
             if is_train:
@@ -223,16 +228,21 @@ class VQGANTrainer:
             log_message = f"Epoch {epoch}/{num_epochs} [{phase}] Summary: {self._format_metrics(avg_metrics)}"
             print(log_message)
 
-    def train(self, train_loader, val_loader, epochs):
+    def train(self, train_loader, val_loader, epochs, smoke_test=False):
         self.load_checkpoint()
         
+        # If smoke_test is active, we only run for 1 epoch
+        if smoke_test:
+            epochs = 1
+            print("--- Smoke test mode enabled: training will run for only 1 epoch with a few batches. ---")
+
         for epoch in range(self.start_epoch, epochs + 1):
             # Training phase
-            train_metrics = self._run_epoch(train_loader, is_train=True, epoch=epoch, num_epochs=epochs)
+            train_metrics = self._run_epoch(train_loader, is_train=True, epoch=epoch, num_epochs=epochs, smoke_test=smoke_test)
             self._log_epoch_summary(epoch, epochs, train_metrics, "Train")
 
             # Validation phase
-            val_metrics, val_samples = self._run_epoch(val_loader, is_train=False, epoch=epoch, num_epochs=epochs)
+            val_metrics, val_samples = self._run_epoch(val_loader, is_train=False, epoch=epoch, num_epochs=epochs, smoke_test=smoke_test)
             self._log_epoch_summary(epoch, epochs, val_metrics, "Validation")
             
             # Save visual samples from the validation phase
