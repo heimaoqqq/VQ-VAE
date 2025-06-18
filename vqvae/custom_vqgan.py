@@ -61,6 +61,10 @@ class CustomVQGAN(nn.Module):
 
     def encode(self, x):
         h = self.encoder(x)
+        # The diffusers VAE encoder is designed to output 2*latent_channels
+        # (mean and logvar). We only need the first half for VQ-GAN.
+        if h.shape[1] == 2 * self.quant_conv.in_channels:
+            h, _ = torch.chunk(h, 2, dim=1)
         h = self.quant_conv(h)
         return h
 
