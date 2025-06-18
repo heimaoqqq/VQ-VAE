@@ -200,7 +200,7 @@ class VQGANTrainer:
         avg_metrics = {key: val / len(dataloader) for key, val in epoch_metrics.items()}
         
         # Calculate and add codebook usage to the summary
-        codebook_usage = (len(used_indices) / self.vqgan.num_vq_embeddings) * 100
+        codebook_usage = (len(used_indices) / self.vqgan.config.num_vq_embeddings) * 100
         avg_metrics['CodebookUsage'] = codebook_usage
         
         # Return samples if they exist (only in validation)
@@ -230,7 +230,7 @@ class VQGANTrainer:
         for epoch in range(self.start_epoch, epochs + 1):
             # Training phase
             train_metrics = self._run_epoch(train_loader, is_train=True, epoch=epoch, num_epochs=epochs)
-            self._log_epoch_summary(epoch, epochs, train_metrics[0], "Train")
+            self._log_epoch_summary(epoch, epochs, train_metrics, "Train")
 
             # Validation phase
             val_metrics, val_samples = self._run_epoch(val_loader, is_train=False, epoch=epoch, num_epochs=epochs)
