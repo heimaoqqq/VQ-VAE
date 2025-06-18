@@ -76,7 +76,7 @@ class VQGANTrainer:
         # 2. Train the Generator (VQ-GAN)
         # ====================================================
         self.g_optimizer.zero_grad()
-
+        
         with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
             # Adversarial Loss from discriminator's perspective on the new reconstructions
             g_output = self.discriminator(decoded_imgs)
@@ -160,7 +160,7 @@ class VQGANTrainer:
             else:
                 with torch.no_grad():
                     batch_metrics = self._validate_batch(images)
-            
+        
             # Update used indices and remove from metrics dict to prevent aggregation
             used_indices.update(torch.unique(batch_metrics.pop('indices')).tolist())
             
@@ -208,7 +208,7 @@ class VQGANTrainer:
             # Step LR schedulers
             if self.lr_scheduler_g: self.lr_scheduler_g.step()
             if self.lr_scheduler_d: self.lr_scheduler_d.step()
-                
+        
             # Save model checkpoint based on perceptual loss
             current_val_loss = val_metrics.get('Perceptual', float('inf'))
             if current_val_loss < self.best_val_loss:
@@ -235,7 +235,7 @@ class VQGANTrainer:
         
         torch.save(checkpoint, latest_checkpoint_path)
         print(f"Saved latest checkpoint to {latest_checkpoint_path}")
-
+        
         # If it's the best model, save it to the main checkpoint path
         if is_best:
             torch.save(checkpoint, self.checkpoint_path)
