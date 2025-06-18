@@ -50,6 +50,7 @@ class VQGANTrainer:
             decoded_imgs = model_output["decoded_imgs"]
             commitment_loss = model_output["commitment_loss"]
             indices = model_output["indices"]
+            perplexity = model_output["perplexity"]
 
             l1_loss = F.l1_loss(decoded_imgs, real_imgs)
             perceptual_loss = self.perceptual_loss(decoded_imgs, real_imgs).mean()
@@ -100,6 +101,7 @@ class VQGANTrainer:
             'Perceptual': perceptual_loss.item(),
             'Adv': g_loss_adv.item(),
             'Commit': commitment_loss.item(),
+            'Perplexity': perplexity.item(),
             'D': d_loss.item(),
             'D_real': d_loss_real.item(),
             'D_fake': d_loss_fake.item(),
@@ -117,6 +119,7 @@ class VQGANTrainer:
             decoded_imgs = model_output["decoded_imgs"]
             commitment_loss = model_output["commitment_loss"]
             indices = model_output["indices"]
+            perplexity = model_output["perplexity"]
 
             l1_loss = F.l1_loss(decoded_imgs, real_imgs)
             perceptual_loss = self.perceptual_loss(decoded_imgs, real_imgs).mean()
@@ -125,6 +128,7 @@ class VQGANTrainer:
             'L1': l1_loss.item(),
             'Perceptual': perceptual_loss.item(),
             'Commit': commitment_loss.item(),
+            'Perplexity': perplexity.item(),
             'indices': indices,
             'original_images': real_imgs, # Keep original images for visualization
             'decoded_images': decoded_imgs, # Keep decoded images for visualization
@@ -133,7 +137,7 @@ class VQGANTrainer:
     def _get_short_metric_names(self):
         return {
             'L1': 'L1', 'Perceptual': 'P', 'Adv': 'Adv', 'Commit': 'C',
-            'D': 'D', 'D_real': 'Dr', 'D_fake': 'Df', 'GP': 'GP',
+            'Perplexity': 'Perp', 'D': 'D', 'D_real': 'Dr', 'D_fake': 'Df', 'GP': 'GP',
             'CodebookUsage': 'U(%)'
         }
 
@@ -145,7 +149,7 @@ class VQGANTrainer:
                 continue
             name = name_map.get(key, key)
             # Format usage as percentage with 1 decimal point for brevity
-            if key == 'CodebookUsage':
+            if key == 'CodebookUsage' or key == 'Perplexity':
                 log_str.append(f"{name}={val:.1f}")
             else:
                 log_str.append(f"{name}={val:.3f}")
@@ -201,7 +205,8 @@ class VQGANTrainer:
                 full_log_str = self._format_metrics(batch_metrics, short_names=False)
                 progress_bar.write(f"  [Batch {i+1}/{len(dataloader)}] {full_log_str}")
 
-        avg_metrics = {key: val / len(dataloader) for key, val in epoch_metrics.items()}
+        num_batches_processed = i + 1
+        avg_metrics = {key: val / num_batches_processed for key, val in epoch_metrics.items()}
         
         # Calculate and add codebook usage to the summary
         codebook_usage = (len(used_indices) / self.vqgan.config['num_vq_embeddings']) * 100
@@ -220,6 +225,7 @@ class VQGANTrainer:
                 'L1': avg_metrics.get('L1', 0),
                 'Perceptual': avg_metrics.get('Perceptual', 0),
                 'Commit': avg_metrics.get('Commit', 0),
+                'Perplexity': avg_metrics.get('Perplexity', 0),
                 'CodebookUsage': avg_metrics.get('CodebookUsage', 0),
             }
             log_message = f"Epoch {epoch}/{num_epochs} [{phase}] Summary: {self._format_metrics(val_summary_metrics)}"

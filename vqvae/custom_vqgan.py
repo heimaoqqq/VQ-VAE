@@ -103,6 +103,7 @@ class CustomVQGAN(nn.Module):
             "decoded_imgs": reconstructed_x,
             "commitment_loss": commitment_loss,
             "indices": indices,
+            "perplexity": perplexity,
         }
 
 @dataclass
