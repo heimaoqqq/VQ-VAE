@@ -41,13 +41,13 @@ class CustomVQGAN(nn.Module):
         )
 
         # Vector Quantizer with EMA enabled
-        # We try to use the modern `use_ema` parameter, but will rely on `decay` for older versions.
+        # We are switching to legacy parameter names (`n_e`, `e_dim`) to match
+        # the version of the diffusers library on your server. EMA is typically
+        # enabled by just providing a decay value in these older versions.
         self.quantize = VectorQuantizer(
-            num_embeddings=num_vq_embeddings,
-            embedding_dim=vq_embed_dim,
+            n_e=num_vq_embeddings,
+            e_dim=vq_embed_dim,
             beta=0.25,
-            commitment_cost=0.25, # Often named beta or commitment_cost
-            use_ema=use_ema,
             decay=ema_decay
         )
 
