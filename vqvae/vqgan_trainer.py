@@ -135,7 +135,15 @@ class VQGANTrainer:
             for key, val in batch_metrics.items():
                 epoch_metrics[key] = epoch_metrics.get(key, 0) + val
             
+            # Update the progress bar with the latest metrics
             pbar.set_postfix({k: f"{v:.3f}" for k, v in batch_metrics.items()})
+
+            # Print detailed log at the specified interval during training
+            if is_train and i > 0 and (i + 1) % self.log_interval == 0:
+                log_str = f"Epoch {epoch} Step [{i+1}/{len(dataloader)}]: "
+                log_str += ", ".join([f"{k}: {v:.4f}" for k, v in batch_metrics.items()])
+                # Print to the same line as tqdm to avoid breaking the bar
+                pbar.write(log_str)
 
         avg_metrics = {key: val / len(dataloader) for key, val in epoch_metrics.items()}
         print(f"Epoch {epoch} [{phase}] Avg Metrics: " + ", ".join([f"{k}: {v:.4f}" for k, v in avg_metrics.items()]))
