@@ -111,9 +111,12 @@ class VQGANTrainer:
                 perceptual_loss = self.perceptual_loss(decoded_imgs, real_imgs).mean()
                 
         return {
-            'L1': l1_loss.item(), 'Perceptual': perceptual_loss.item(),
-            'Commit': commitment_loss.item(), 'Perplexity': perplexity.item(),
-            'originals': real_imgs, 'reconstructions': decoded_imgs.clamp(0, 1) # Clamp for valid image range
+            'L1': l1_loss.item(), 
+            'Perceptual': perceptual_loss.item(),
+            'Commit': commitment_loss.item(), 
+            'Perplexity': perplexity.item(),
+            'originals': real_imgs, 
+            'reconstructions': decoded_imgs.clamp(0, 1) # Clamp for valid image range
         }
 
     def _run_epoch(self, dataloader, is_train, epoch, num_epochs):
@@ -132,6 +135,7 @@ class VQGANTrainer:
                 all_samples['originals'].append(batch_metrics.pop('originals').cpu())
                 all_samples['reconstructions'].append(batch_metrics.pop('reconstructions').cpu())
 
+            # Now, batch_metrics only contains scalar metrics
             for key, val in batch_metrics.items():
                 epoch_metrics[key] = epoch_metrics.get(key, 0) + val
             
