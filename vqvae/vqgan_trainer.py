@@ -40,9 +40,9 @@ class VQGANTrainer:
         for param in self.perceptual_loss.parameters():
             param.requires_grad = False
 
-        # AMP Scalers
-        self.g_scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
-        self.d_scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
+        # AMP Scalers (using the new torch.amp API)
+        self.g_scaler = torch.amp.GradScaler(self.device.type, enabled=self.use_amp)
+        self.d_scaler = torch.amp.GradScaler(self.device.type, enabled=self.use_amp)
 
     def _train_batch(self, batch):
         real_imgs, _ = batch
@@ -50,7 +50,7 @@ class VQGANTrainer:
         
         # --- Train Discriminator ---
         self.d_optimizer.zero_grad()
-        with torch.cuda.amp.autocast(enabled=self.use_amp):
+        with torch.amp.autocast(self.device.type, enabled=self.use_amp):
             # We only need the decoded images for the discriminator, so we detach them
             decoded_imgs_detached = self.vqgan(real_imgs, return_dict=True)["decoded_imgs"].detach()
             
@@ -66,7 +66,7 @@ class VQGANTrainer:
 
         # --- Train Generator ---
         self.g_optimizer.zero_grad()
-        with torch.cuda.amp.autocast(enabled=self.use_amp):
+        with torch.amp.autocast(self.device.type, enabled=self.use_amp):
             # Forward pass for generator
             vqgan_output = self.vqgan(real_imgs, return_dict=True)
             decoded_imgs = vqgan_output["decoded_imgs"]
@@ -101,7 +101,7 @@ class VQGANTrainer:
         real_imgs, _ = batch
         real_imgs = real_imgs.to(self.device)
         with torch.no_grad():
-            with torch.cuda.amp.autocast(enabled=self.use_amp):
+            with torch.amp.autocast(self.device.type, enabled=self.use_amp):
                 vqgan_output = self.vqgan(real_imgs, return_dict=True)
                 decoded_imgs = vqgan_output["decoded_imgs"]
                 commitment_loss = vqgan_output["commitment_loss"]
