@@ -34,11 +34,14 @@ class EMAVectorQuantizer(nn.Module):
         inputs = inputs.permute(0, 2, 3, 1).contiguous()
         flat_input = inputs.view(-1, self.embedding_dim)
         
+        # 确保嵌入权重在与输入相同的设备上
+        embedding_weight = self.embedding.weight.to(inputs.device)
+        
         # Calculate distances: (z - e)^2 = z^2 + e^2 - 2ze
         distances = (
             torch.sum(flat_input**2, dim=1, keepdim=True) 
-            + torch.sum(self.embedding.weight**2, dim=1)
-            - 2 * torch.matmul(flat_input, self.embedding.weight.t())
+            + torch.sum(embedding_weight**2, dim=1)
+            - 2 * torch.matmul(flat_input, embedding_weight.t())
         )
             
         # Find closest encodings
@@ -47,7 +50,7 @@ class EMAVectorQuantizer(nn.Module):
         encodings.scatter_(1, encoding_indices, 1)
         
         # Quantize and un-flatten
-        quantized = torch.matmul(encodings, self.embedding.weight).view(inputs.shape)
+        quantized = torch.matmul(encodings, embedding_weight).view(inputs.shape)
         
         # Use EMA to update the embedding vectors if in training mode
         if self.training:
@@ -55,8 +58,11 @@ class EMAVectorQuantizer(nn.Module):
             with torch.no_grad():
                 # 增加本批次使用的码元计数
                 batch_usage = torch.sum(encodings, dim=0)
+                self.usage_count = self.usage_count.to(batch_usage.device)
                 self.usage_count += batch_usage
                 
+                # 确保ema_cluster_size在正确的设备上
+                self.ema_cluster_size = self.ema_cluster_size.to(encodings.device)
                 self.ema_cluster_size = self.ema_cluster_size * self.decay + \
                                       (1 - self.decay) * torch.sum(encodings, 0)
                 
@@ -68,9 +74,12 @@ class EMAVectorQuantizer(nn.Module):
                     * n
                 )
                 
+                # 确保ema_w在正确的设备上
+                self.ema_w = self.ema_w.to(flat_input.device)
                 dw = torch.matmul(encodings.t(), flat_input)
                 self.ema_w = self.ema_w * self.decay + (1 - self.decay) * dw
                 
+                # 更新嵌入权重
                 self.embedding.weight.data.copy_(self.ema_w / self.ema_cluster_size.unsqueeze(1))
             
         # Calculate commitment loss
