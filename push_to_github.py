@@ -18,7 +18,7 @@ def push_to_github():
         return False
     
     # 提交更改
-    commit_message = "优化扩散模型结构: 改进注意力机制和显存效率，适配16GB显存限制"
+    commit_message = "优化VQ-GAN训练：调整损失权重，实现渐进式码本扩展，解决码本坍塌问题"
     if not run_command(f'git commit -m "{commit_message}"'):
         print("提交更改失败")
         return False

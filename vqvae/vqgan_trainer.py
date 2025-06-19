@@ -7,9 +7,10 @@ import os
 from tqdm import tqdm
 from lpips import LPIPS
 from torchvision.utils import save_image
+import numpy as np
 
 class VQGANTrainer:
-    def __init__(self, vqgan, discriminator, g_optimizer, d_optimizer, lr_scheduler_g, lr_scheduler_d, device, use_amp, checkpoint_path, sample_dir, lambda_gp=10.0, l1_weight=1.0, perceptual_weight=1.0, adversarial_weight=0.8, log_interval=50):
+    def __init__(self, vqgan, discriminator, g_optimizer, d_optimizer, lr_scheduler_g, lr_scheduler_d, device, use_amp, checkpoint_path, sample_dir, lambda_gp=10.0, l1_weight=1.0, perceptual_weight=0.01, adversarial_weight=0.8, log_interval=50):
         self.vqgan = vqgan
         self.discriminator = discriminator
         self.g_optimizer = g_optimizer
@@ -34,6 +35,11 @@ class VQGANTrainer:
         
         # Early stopping attributes
         self.early_stopping_counter = 0
+        
+        # 码本监控相关
+        self.codebook_stats = []
+        self.max_codebook_size = 4096  # 最大码本大小
+        self.expansion_threshold = 0.8  # 码本利用率超过此值时扩展
         
         # Initialize LPIPS loss
         self.perceptual_loss = LPIPS(net='vgg').to(self.device).eval()
@@ -75,7 +81,12 @@ class VQGANTrainer:
             
             # Reconstruction losses
             l1_loss = F.l1_loss(decoded_imgs, real_imgs)
-            perceptual_loss = self.perceptual_loss(decoded_imgs, real_imgs).mean()
+            
+            # 只有当perceptual_weight > 0时才计算感知损失
+            if self.perceptual_weight > 0:
+                perceptual_loss = self.perceptual_loss(decoded_imgs, real_imgs).mean()
+            else:
+                perceptual_loss = torch.tensor(0.0, device=self.device)
             
             # Adversarial loss
             g_output = self.discriminator(decoded_imgs)
@@ -108,7 +119,12 @@ class VQGANTrainer:
                 perplexity = vqgan_output["perplexity"]
                 
                 l1_loss = F.l1_loss(decoded_imgs, real_imgs)
-                perceptual_loss = self.perceptual_loss(decoded_imgs, real_imgs).mean()
+                
+                # 只有当perceptual_weight > 0时才计算感知损失
+                if self.perceptual_weight > 0:
+                    perceptual_loss = self.perceptual_loss(decoded_imgs, real_imgs).mean()
+                else:
+                    perceptual_loss = torch.tensor(0.0, device=self.device)
                 
         return {
             'L1': l1_loss.item(), 
@@ -166,13 +182,24 @@ class VQGANTrainer:
             print("--- Smoke test mode enabled: training will run for only 1 epoch. ---")
 
         for epoch in range(self.start_epoch, epochs + 1):
+            # 检查并重置未使用的码元
+            if hasattr(self.vqgan.quantize, 'reset_dead_codes'):
+                self.vqgan.quantize.reset_dead_codes(threshold=2, current_epoch=epoch)
+                
+            # 训练一个epoch
             train_metrics, _ = self._run_epoch(train_loader, is_train=True, epoch=epoch, num_epochs=epochs)
             
+            # 验证
             val_metrics, val_samples = self._run_epoch(val_loader, is_train=False, epoch=epoch, num_epochs=epochs)
             current_val_loss = val_metrics.get('Perceptual', float('inf'))
 
+            # 学习率调度
             if self.lr_scheduler_g: self.lr_scheduler_g.step()
             if self.lr_scheduler_d: self.lr_scheduler_d.step()
+
+            # --- 码本监控和扩展 ---
+            if epoch % 5 == 0 or epoch == 1:  # 每5个epoch检查一次
+                self.monitor_codebook(epoch)
 
             # --- Checkpoint and Early Stopping ---
             if current_val_loss < self.best_val_loss:
@@ -205,6 +232,7 @@ class VQGANTrainer:
             'd_scheduler_state_dict': self.lr_scheduler_d.state_dict() if self.lr_scheduler_d else None,
             'g_scaler_state_dict': self.g_scaler.state_dict(),
             'd_scaler_state_dict': self.d_scaler.state_dict(),
+            'codebook_stats': self.codebook_stats,
         }
         
         if is_best:
@@ -238,6 +266,9 @@ class VQGANTrainer:
         self.g_scaler.load_state_dict(checkpoint['g_scaler_state_dict'])
         self.d_scaler.load_state_dict(checkpoint['d_scaler_state_dict'])
         
+        if 'codebook_stats' in checkpoint:
+            self.codebook_stats = checkpoint['codebook_stats']
+        
         self.start_epoch = checkpoint['epoch'] + 1
         self.best_val_loss = checkpoint.get('best_val_loss', float('inf'))
         
@@ -258,4 +289,54 @@ class VQGANTrainer:
         
         gradients = gradients.view(gradients.size(0), -1)
         gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
-        return gradient_penalty 
+        return gradient_penalty
+    
+    def monitor_codebook(self, epoch):
+        """监控码本使用情况并在必要时扩展码本"""
+        if not hasattr(self.vqgan.quantize, 'get_codebook_stats'):
+            return
+            
+        # 获取码本统计信息
+        stats = self.vqgan.quantize.get_codebook_stats()
+        stats['epoch'] = epoch
+        self.codebook_stats.append(stats)
+        
+        # 打印码本使用情况
+        print(f"\nCodebook Stats [Epoch {epoch}]:")
+        print(f"- Active codes: {stats['active_size']}/{self.vqgan.quantize.num_embeddings} ({stats['utilization']:.4f})")
+        print(f"- Codebook entropy: {stats['entropy']:.4f} (normalized: {stats['normalized_entropy']:.4f})")
+        
+        # 检查是否需要扩展码本
+        current_size = self.vqgan.quantize.num_embeddings
+        if stats['utilization'] > self.expansion_threshold and current_size < self.max_codebook_size:
+            # 计算新的码本大小 (增加一倍，但不超过最大值)
+            new_size = min(current_size * 2, self.max_codebook_size)
+            
+            # 扩展码本
+            if hasattr(self.vqgan.quantize, 'expand_codebook'):
+                print(f"Expanding codebook from {current_size} to {new_size}...")
+                success = self.vqgan.quantize.expand_codebook(new_size)
+                
+                if success:
+                    # 更新优化器以包含新的码本参数
+                    self._update_optimizers_after_expansion()
+                    print(f"Codebook successfully expanded to {new_size}")
+    
+    def _update_optimizers_after_expansion(self):
+        """在码本扩展后更新优化器"""
+        # 重新创建生成器优化器，包含新的码本参数
+        encoder_decoder_params = list(self.vqgan.encoder.parameters()) + \
+                                list(self.vqgan.decoder.parameters()) + \
+                                list(self.vqgan.quant_conv.parameters()) + \
+                                list(self.vqgan.post_quant_conv.parameters()) + \
+                                list(self.vqgan.quantize.parameters())
+                                
+        # 保存当前状态
+        state_dict = self.g_optimizer.state_dict()
+        
+        # 创建新的优化器
+        self.g_optimizer = torch.optim.Adam(
+            encoder_decoder_params,
+            lr=state_dict['param_groups'][0]['lr'],
+            betas=(state_dict['param_groups'][0]['betas'][0], state_dict['param_groups'][0]['betas'][1])
+        ) 

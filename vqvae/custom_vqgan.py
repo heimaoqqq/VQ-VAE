@@ -15,7 +15,7 @@ class CustomVQGAN(nn.Module):
         latent_channels: int = 256,
         n_embed: int = 8192,
         embed_dim: int = 256,
-        ema_decay: float = 0.995,
+        ema_decay: float = 0.999,
         commitment_loss_beta: float = 0.25,
     ):
         super().__init__()
@@ -55,7 +55,9 @@ class CustomVQGAN(nn.Module):
         # To access config values in the trainer
         self.config = {
             "num_vq_embeddings": n_embed,
-            "vq_embed_dim": embed_dim
+            "vq_embed_dim": embed_dim,
+            "ema_decay": ema_decay,
+            "commitment_loss_beta": commitment_loss_beta
         }
 
 
@@ -119,5 +121,7 @@ class VQGANConfig:
     num_vq_embeddings: int = 1024
     vq_embed_dim: int = 256
     scaling_factor: float = 0.18215
+    ema_decay: float = 0.999
+    commitment_loss_beta: float = 2.0
     # Discriminator
     # ... existing code ... 
