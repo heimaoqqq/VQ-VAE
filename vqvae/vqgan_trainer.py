@@ -10,7 +10,7 @@ from torchvision.utils import save_image
 import numpy as np
 
 class VQGANTrainer:
-    def __init__(self, vqgan, discriminator, g_optimizer, d_optimizer, lr_scheduler_g, lr_scheduler_d, device, use_amp, checkpoint_path, sample_dir, lambda_gp=10.0, l1_weight=1.0, perceptual_weight=0.01, adversarial_weight=0.8, entropy_weight=0.3, log_interval=50):
+    def __init__(self, vqgan, discriminator, g_optimizer, d_optimizer, lr_scheduler_g, lr_scheduler_d, device, use_amp, checkpoint_path, sample_dir, lambda_gp=10.0, l1_weight=1.0, perceptual_weight=0.005, adversarial_weight=0.8, entropy_weight=0.3, log_interval=50):
         self.vqgan = vqgan
         self.discriminator = discriminator
         self.g_optimizer = g_optimizer

@@ -162,8 +162,8 @@ class EMAVectorQuantizer(nn.Module):
         if not self.training or current_epoch is None:
             return 0
             
-        # 每10个epoch检查一次
-        if current_epoch - self.last_reset_epoch.item() < 10:
+        # 每3个epoch检查一次（原来是10个epoch）
+        if current_epoch - self.last_reset_epoch.item() < 3:
             return 0
             
         with torch.no_grad():
