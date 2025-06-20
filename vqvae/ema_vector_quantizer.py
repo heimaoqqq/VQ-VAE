@@ -80,6 +80,7 @@ class EMAVectorQuantizer(nn.Module):
                 self.ema_w = self.ema_w * self.decay + (1 - self.decay) * dw
                 
                 # 更新嵌入权重
+                self.embedding.weight.data = self.embedding.weight.data.to(self.ema_w.device)
                 self.embedding.weight.data.copy_(self.ema_w / self.ema_cluster_size.unsqueeze(1))
             
         # Calculate commitment loss
@@ -121,13 +122,14 @@ class EMAVectorQuantizer(nn.Module):
         if old_size > 0:
             # 找出使用最频繁的码元
             usage = self.usage_count[:old_size]
+            device = old_weight.device  # 获取old_weight的设备
             _, top_indices = torch.topk(usage, min(100, old_size))
             
             # 随机选择这些热门码元进行复制和扰动
             if len(top_indices) > 0:
-                indices = top_indices[torch.randint(0, len(top_indices), (new_size - old_size,))]
+                indices = top_indices[torch.randint(0, len(top_indices), (new_size - old_size,), device=device)]
             else:
-                indices = torch.randint(0, old_size, (new_size - old_size,))
+                indices = torch.randint(0, old_size, (new_size - old_size,), device=device)
                 
             new_embeddings = old_weight[indices].clone()
             # 添加小随机扰动
@@ -166,6 +168,7 @@ class EMAVectorQuantizer(nn.Module):
             
         with torch.no_grad():
             # 找出使用次数低于阈值的码元
+            device = self.embedding.weight.device
             dead_indices = torch.where(self.ema_cluster_size < threshold)[0]
             n_dead = len(dead_indices)
             
@@ -176,7 +179,7 @@ class EMAVectorQuantizer(nn.Module):
                 # 为每个死码元随机选择一个活跃码元
                 for i, dead_idx in enumerate(dead_indices):
                     # 随机选择一个活跃码元
-                    live_idx = top_indices[torch.randint(0, len(top_indices), (1,)).item()]
+                    live_idx = top_indices[torch.randint(0, len(top_indices), (1,), device=device).item()]
                     
                     # 复制活跃码元的权重并添加随机扰动
                     self.embedding.weight.data[dead_idx] = self.embedding.weight.data[live_idx].clone()
@@ -197,15 +200,19 @@ class EMAVectorQuantizer(nn.Module):
     def get_codebook_stats(self):
         """获取码本使用统计信息"""
         with torch.no_grad():
+            # 确保所有张量在同一设备上
+            device = self.embedding.weight.device
+            ema_cluster_size = self.ema_cluster_size.to(device)
+            
             # 计算活跃码元数量
-            active_size = torch.sum(self.ema_cluster_size > 0).item()
+            active_size = torch.sum(ema_cluster_size > 0).item()
             utilization = active_size / self.num_embeddings
             
             # 计算熵
             if active_size > 0:
-                probs = self.ema_cluster_size / torch.sum(self.ema_cluster_size)
+                probs = ema_cluster_size / torch.sum(ema_cluster_size)
                 entropy = -torch.sum(probs * torch.log2(probs + 1e-10)).item()
-                max_entropy = torch.log2(torch.tensor(self.num_embeddings, dtype=torch.float)).item()
+                max_entropy = torch.log2(torch.tensor(self.num_embeddings, dtype=torch.float, device=device)).item()
                 normalized_entropy = entropy / max_entropy
             else:
                 entropy = 0
