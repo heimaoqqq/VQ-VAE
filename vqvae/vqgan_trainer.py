@@ -94,11 +94,14 @@ class VQGANTrainer:
             g_loss_adv = -g_output.mean()
             
             # 添加码本熵正则化 - 鼓励更均匀的码本使用
-            entropy_loss = torch.tensor(0.0, device=self.device)
+            entropy_loss_val = 0.0
             if self.entropy_weight > 0 and hasattr(self.vqgan.quantize, 'get_codebook_stats'):
                 stats = self.vqgan.quantize.get_codebook_stats()
                 # 熵越大越好，所以我们最小化负熵
                 entropy_loss = -self.entropy_weight * stats['normalized_entropy']
+                entropy_loss_val = entropy_loss.item() if torch.is_tensor(entropy_loss) else float(entropy_loss)
+            else:
+                entropy_loss = 0.0
             
             # Combine all losses for the generator
             # The commitment loss is already scaled by its beta inside the VQGAN model
@@ -117,7 +120,7 @@ class VQGANTrainer:
             'Perceptual': perceptual_loss.item(), 
             'Adv': g_loss_adv.item(),
             'Commit': commitment_loss.item(), 
-            'Entropy': entropy_loss.item() if self.entropy_weight > 0 else 0.0,  # 添加熵损失到指标
+            'Entropy': entropy_loss_val,  # 使用预先计算的值
             'Perplexity': perplexity.item(), 
             'D': d_loss.item()
         }
