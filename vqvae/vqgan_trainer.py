@@ -188,12 +188,58 @@ class VQGANTrainer:
         
         return avg_metrics, all_samples
 
-    def train(self, train_loader, val_loader, epochs, early_stopping_patience=0, smoke_test=False):
-        self.load_checkpoint()
+    def train(self, train_loader, val_loader, epochs, early_stopping_patience=0, 
+             smoke_test=False, skip_optimizer=False, strict_loading=False, lr_scale=1.0,
+             resume_training=True):
+        """
+        训练模型
+        
+        参数:
+            train_loader: 训练数据加载器
+            val_loader: 验证数据加载器
+            epochs: 总训练轮次
+            early_stopping_patience: 早停耐心值，0表示禁用早停
+            smoke_test: 是否进行冒烟测试（只训练1轮）
+            skip_optimizer: 是否跳过加载优化器状态
+            strict_loading: 是否严格加载模型权重
+            lr_scale: 恢复训练时的学习率缩放因子
+            resume_training: 是否从检查点恢复训练，False表示从头开始
+        """
+        if resume_training:
+            load_success = self.load_checkpoint(
+                skip_optimizer=skip_optimizer, 
+                strict_model_loading=strict_loading,
+                lr_scale=lr_scale
+            )
+            if not load_success:
+                print("检查点加载失败，将从头开始训练")
+                self.start_epoch = 1
+                self.best_val_loss = float('inf')
+        else:
+            print("从头开始训练，忽略现有检查点")
+            self.start_epoch = 1
+            self.best_val_loss = float('inf')
         
         if smoke_test:
             epochs = 1
-            print("--- Smoke test mode enabled: training will run for only 1 epoch. ---")
+            print("--- 冒烟测试模式：只训练1轮 ---")
+
+        # 打印训练配置
+        print("\n=== 训练配置 ===")
+        print(f"批次大小: {train_loader.batch_size}")
+        print(f"训练样本数: {len(train_loader.dataset)}")
+        print(f"验证样本数: {len(val_loader.dataset)}")
+        print(f"码本大小: {self.vqgan.quantize.num_embeddings}")
+        print(f"感知损失权重: {self.perceptual_weight}")
+        print(f"对抗损失权重: {self.adversarial_weight}")
+        print(f"承诺损失系数: {self.vqgan.config['commitment_loss_beta']}")
+        if hasattr(self, 'entropy_weight'):
+            print(f"熵正则化权重: {self.entropy_weight}")
+        print(f"EMA衰减率: {self.vqgan.config['ema_decay']}")
+        print(f"起始轮次: {self.start_epoch}")
+        print(f"总训练轮次: {epochs}")
+        print(f"早停耐心值: {early_stopping_patience}")
+        print("================\n")
 
         for epoch in range(self.start_epoch, epochs + 1):
             # 检查并重置未使用的码元
@@ -217,22 +263,22 @@ class VQGANTrainer:
 
             # --- Checkpoint and Early Stopping ---
             if current_val_loss < self.best_val_loss:
-                print(f"Validation loss improved from {self.best_val_loss:.4f} to {current_val_loss:.4f}. Saving model...")
+                print(f"验证损失从 {self.best_val_loss:.4f} 改善到 {current_val_loss:.4f}。保存模型...")
                 self.best_val_loss = current_val_loss
                 self.save_checkpoint(epoch, is_best=True)
                 self.early_stopping_counter = 0
             else:
                 self.early_stopping_counter += 1
-                print(f"Validation loss did not improve. Counter: {self.early_stopping_counter}/{early_stopping_patience}")
+                print(f"验证损失未改善。计数器: {self.early_stopping_counter}/{early_stopping_patience}")
             
             if val_samples['originals']:
                 self._save_sample_images(epoch, torch.cat(val_samples['originals']), torch.cat(val_samples['reconstructions']))
 
             if early_stopping_patience > 0 and self.early_stopping_counter >= early_stopping_patience:
-                print(f"Early stopping triggered after {epoch} epochs.")
+                print(f"早停在轮次 {epoch} 触发。")
                 break
         
-        print("Training finished.")
+        print("训练完成。")
 
     def save_checkpoint(self, epoch, is_best=False):
         checkpoint = {
@@ -267,34 +313,129 @@ class VQGANTrainer:
         save_path = os.path.join(self.sample_dir, f'reconstruction_epoch_{epoch:04d}.png')
         save_image(comparison, save_path, nrow=num_samples, normalize=False)
 
-    def load_checkpoint(self):
+    def load_checkpoint(self, skip_optimizer=False, strict_model_loading=False, lr_scale=1.0):
+        """
+        加载检查点，支持更灵活的选项
+        
+        参数:
+            skip_optimizer (bool): 是否跳过加载优化器状态
+            strict_model_loading (bool): 是否严格加载模型权重（不允许缺失或多余的键）
+            lr_scale (float): 学习率缩放因子，用于从中断处恢复时调整学习率
+        """
         if not os.path.isfile(self.checkpoint_path):
             print("No checkpoint found, starting from scratch.")
             return
 
         print(f"Loading checkpoint from {self.checkpoint_path}")
-        checkpoint = torch.load(self.checkpoint_path, map_location=self.device)
-        
-        self.vqgan.load_state_dict(checkpoint['vqgan_state_dict'])
-        self.discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
-        self.g_optimizer.load_state_dict(checkpoint['g_optimizer_state_dict'])
-        self.d_optimizer.load_state_dict(checkpoint['d_optimizer_state_dict'])
-        
-        if self.lr_scheduler_g and 'g_scheduler_state_dict' in checkpoint:
-            self.lr_scheduler_g.load_state_dict(checkpoint['g_scheduler_state_dict'])
-        if self.lr_scheduler_d and 'd_scheduler_state_dict' in checkpoint:
-            self.lr_scheduler_d.load_state_dict(checkpoint['d_scheduler_state_dict'])
-        
-        self.g_scaler.load_state_dict(checkpoint['g_scaler_state_dict'])
-        self.d_scaler.load_state_dict(checkpoint['d_scaler_state_dict'])
-        
-        if 'codebook_stats' in checkpoint:
-            self.codebook_stats = checkpoint['codebook_stats']
-        
-        self.start_epoch = checkpoint['epoch'] + 1
-        self.best_val_loss = checkpoint.get('best_val_loss', float('inf'))
-        
-        print(f"Resuming training from epoch {self.start_epoch}")
+        try:
+            checkpoint = torch.load(self.checkpoint_path, map_location=self.device)
+            
+            # 加载模型权重，处理可能的结构变化
+            try:
+                self.vqgan.load_state_dict(checkpoint['vqgan_state_dict'], strict=strict_model_loading)
+                print("VQGAN模型权重加载成功")
+            except RuntimeError as e:
+                if "size mismatch" in str(e) and "quantize" in str(e):
+                    print("检测到码本大小不匹配，尝试调整...")
+                    current_codebook_size = self.vqgan.quantize.num_embeddings
+                    checkpoint_size = None
+                    
+                    # 尝试从错误信息中提取码本大小
+                    import re
+                    size_match = re.search(r'copying a param with shape torch.Size\(\[(\d+)', str(e))
+                    if size_match:
+                        checkpoint_size = int(size_match.group(1))
+                        print(f"检查点码本大小: {checkpoint_size}, 当前码本大小: {current_codebook_size}")
+                    
+                    if not strict_model_loading:
+                        print("使用非严格模式，尝试加载兼容的权重...")
+                        # 创建新的状态字典，只包含兼容的键
+                        compatible_dict = {}
+                        checkpoint_dict = checkpoint['vqgan_state_dict']
+                        model_dict = self.vqgan.state_dict()
+                        
+                        for k, v in checkpoint_dict.items():
+                            if k in model_dict and v.shape == model_dict[k].shape:
+                                compatible_dict[k] = v
+                        
+                        # 加载兼容的权重
+                        self.vqgan.load_state_dict(compatible_dict, strict=False)
+                        print(f"已加载 {len(compatible_dict)}/{len(model_dict)} 个兼容的参数")
+                    else:
+                        print("严格加载模式下无法处理码本大小不匹配，请调整模型配置或使用非严格模式")
+                        return
+                else:
+                    print(f"加载模型权重时出错: {e}")
+                    if strict_model_loading:
+                        raise
+                    else:
+                        print("使用非严格模式继续...")
+            
+            try:
+                self.discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
+                print("判别器模型权重加载成功")
+            except Exception as e:
+                print(f"加载判别器权重时出错: {e}")
+                if strict_model_loading:
+                    raise
+            
+            # 根据参数决定是否加载优化器状态
+            if not skip_optimizer:
+                try:
+                    self.g_optimizer.load_state_dict(checkpoint['g_optimizer_state_dict'])
+                    self.d_optimizer.load_state_dict(checkpoint['d_optimizer_state_dict'])
+                    
+                    # 如果需要调整学习率
+                    if lr_scale != 1.0:
+                        for param_group in self.g_optimizer.param_groups:
+                            param_group['lr'] = param_group['lr'] * lr_scale
+                        for param_group in self.d_optimizer.param_groups:
+                            param_group['lr'] = param_group['lr'] * lr_scale
+                        print(f"学习率已按因子 {lr_scale} 调整")
+                    
+                    print("优化器状态加载成功")
+                except Exception as e:
+                    print(f"加载优化器状态时出错: {e}")
+                    print("将使用新初始化的优化器")
+            else:
+                print("跳过加载优化器状态")
+            
+            # 加载学习率调度器状态
+            if self.lr_scheduler_g and 'g_scheduler_state_dict' in checkpoint:
+                try:
+                    self.lr_scheduler_g.load_state_dict(checkpoint['g_scheduler_state_dict'])
+                except Exception as e:
+                    print(f"加载生成器学习率调度器时出错: {e}")
+            
+            if self.lr_scheduler_d and 'd_scheduler_state_dict' in checkpoint:
+                try:
+                    self.lr_scheduler_d.load_state_dict(checkpoint['d_scheduler_state_dict'])
+                except Exception as e:
+                    print(f"加载判别器学习率调度器时出错: {e}")
+            
+            # 加载AMP缩放器状态
+            try:
+                self.g_scaler.load_state_dict(checkpoint['g_scaler_state_dict'])
+                self.d_scaler.load_state_dict(checkpoint['d_scaler_state_dict'])
+            except Exception as e:
+                print(f"加载AMP缩放器状态时出错: {e}")
+            
+            # 加载码本统计信息
+            if 'codebook_stats' in checkpoint:
+                self.codebook_stats = checkpoint['codebook_stats']
+                print(f"已加载码本统计信息，包含 {len(self.codebook_stats)} 条记录")
+            
+            # 设置起始轮次
+            self.start_epoch = checkpoint.get('epoch', 0) + 1
+            self.best_val_loss = checkpoint.get('best_val_loss', float('inf'))
+            
+            print(f"从轮次 {self.start_epoch} 继续训练，最佳验证损失: {self.best_val_loss:.4f}")
+            return True
+        except Exception as e:
+            print(f"加载检查点时发生未预期的错误: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
 
     def compute_gradient_penalty(self, real_samples, fake_samples):
         alpha = torch.rand(real_samples.size(0), 1, 1, 1, device=self.device)

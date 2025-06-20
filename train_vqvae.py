@@ -60,6 +60,12 @@ def main(config):
     # Create output directory for checkpoints
     os.makedirs(config.output_dir, exist_ok=True)
     checkpoint_path = os.path.join(config.output_dir, "vqgan_model_best.pt")
+    
+    # 如果指定了自定义检查点路径，使用它
+    if config.checkpoint_path:
+        checkpoint_path = config.checkpoint_path
+        print(f"使用自定义检查点路径: {checkpoint_path}")
+    
     sample_dir = os.path.join(config.output_dir, "samples")
     os.makedirs(sample_dir, exist_ok=True)
     
@@ -79,8 +85,8 @@ def main(config):
         l1_weight=config.l1_weight,
         perceptual_weight=config.perceptual_weight,
         adversarial_weight=config.adversarial_weight,
-        log_interval=config.log_interval,
-        entropy_weight=config.entropy_weight
+        entropy_weight=config.entropy_weight,
+        log_interval=config.log_interval
     )
 
     # Start training
@@ -89,7 +95,11 @@ def main(config):
         train_loader, 
         val_loader, 
         config.epochs, 
-        early_stopping_patience=config.early_stopping_patience
+        early_stopping_patience=config.early_stopping_patience,
+        skip_optimizer=config.skip_optimizer,
+        strict_loading=config.strict_loading,
+        lr_scale=config.lr_scale,
+        resume_training=not config.fresh_start
     )
     print("Training finished.")
 
@@ -128,6 +138,13 @@ if __name__ == '__main__':
             
     # Dataset params
     parser.add_argument('--val_split_ratio', type=float, default=0.05, help='Ratio of dataset to be used for validation')
+
+    # 恢复训练选项
+    parser.add_argument('--checkpoint_path', type=str, default=None, help='自定义检查点文件路径')
+    parser.add_argument('--skip_optimizer', action='store_true', help='跳过加载优化器状态')
+    parser.add_argument('--strict_loading', action='store_true', help='严格加载模型权重（不允许缺失或多余的键）')
+    parser.add_argument('--lr_scale', type=float, default=1.0, help='恢复训练时的学习率缩放因子')
+    parser.add_argument('--fresh_start', action='store_true', help='从头开始训练，忽略现有检查点')
 
     config = parser.parse_args()
     main(config) 
