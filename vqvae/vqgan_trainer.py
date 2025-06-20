@@ -10,7 +10,7 @@ from torchvision.utils import save_image
 import numpy as np
 
 class VQGANTrainer:
-    def __init__(self, vqgan, discriminator, g_optimizer, d_optimizer, lr_scheduler_g, lr_scheduler_d, device, use_amp, checkpoint_path, sample_dir, lambda_gp=10.0, l1_weight=1.0, perceptual_weight=0.01, adversarial_weight=0.8, entropy_weight=0.1, log_interval=50):
+    def __init__(self, vqgan, discriminator, g_optimizer, d_optimizer, lr_scheduler_g, lr_scheduler_d, device, use_amp, checkpoint_path, sample_dir, lambda_gp=10.0, l1_weight=1.0, perceptual_weight=0.01, adversarial_weight=0.8, entropy_weight=0.3, log_interval=50):
         self.vqgan = vqgan
         self.discriminator = discriminator
         self.g_optimizer = g_optimizer
@@ -24,7 +24,7 @@ class VQGANTrainer:
         self.l1_weight = l1_weight
         self.perceptual_weight = perceptual_weight
         self.adversarial_weight = adversarial_weight
-        self.entropy_weight = entropy_weight  # 添加熵正则化权重
+        self.entropy_weight = entropy_weight  # 增加熵正则化权重到0.3
 
         self.checkpoint_path = checkpoint_path
         self.sample_dir = sample_dir
@@ -40,7 +40,7 @@ class VQGANTrainer:
         # 码本监控相关
         self.codebook_stats = []
         self.max_codebook_size = 4096  # 最大码本大小
-        self.expansion_threshold = 0.8  # 码本利用率超过此值时扩展
+        self.expansion_threshold = 0.8  # 降低码本利用率阈值到0.8
         
         # Initialize LPIPS loss
         self.perceptual_loss = LPIPS(net='vgg').to(self.device).eval()
@@ -94,11 +94,14 @@ class VQGANTrainer:
             g_loss_adv = -g_output.mean()
             
             # 添加码本熵正则化 - 鼓励更均匀的码本使用
-            entropy_loss = torch.tensor(0.0, device=self.device)
+            entropy_loss_val = 0.0
             if self.entropy_weight > 0 and hasattr(self.vqgan.quantize, 'get_codebook_stats'):
                 stats = self.vqgan.quantize.get_codebook_stats()
                 # 熵越大越好，所以我们最小化负熵
                 entropy_loss = -self.entropy_weight * stats['normalized_entropy']
+                entropy_loss_val = entropy_loss.item() if torch.is_tensor(entropy_loss) else float(entropy_loss)
+            else:
+                entropy_loss = 0.0
             
             # Combine all losses for the generator
             # The commitment loss is already scaled by its beta inside the VQGAN model
@@ -117,7 +120,7 @@ class VQGANTrainer:
             'Perceptual': perceptual_loss.item(), 
             'Adv': g_loss_adv.item(),
             'Commit': commitment_loss.item(), 
-            'Entropy': entropy_loss.item() if self.entropy_weight > 0 else 0.0,  # 添加熵损失到指标
+            'Entropy': entropy_loss_val,  # 使用预先计算的值
             'Perplexity': perplexity.item(), 
             'D': d_loss.item()
         }
@@ -251,8 +254,8 @@ class VQGANTrainer:
             if self.lr_scheduler_d: self.lr_scheduler_d.step()
 
             # --- 码本监控和扩展 ---
-            if epoch % 5 == 0 or epoch == 1:  # 每5个epoch检查一次
-                self.monitor_codebook(epoch)
+            # 每个epoch都检查码本使用情况
+            self.monitor_codebook(epoch)
 
             # --- Checkpoint and Early Stopping ---
             if current_val_loss < self.best_val_loss:

@@ -24,7 +24,7 @@ class EMAVectorQuantizer(nn.Module):
         # Buffers for EMA updates, not part of the model's parameters
         self.register_buffer('ema_cluster_size', torch.zeros(num_embeddings))
         self.register_buffer('ema_w', torch.zeros(num_embeddings, self.embedding_dim))
-        
+
         # 添加一个计数器用于跟踪码元使用情况
         self.register_buffer('usage_count', torch.zeros(num_embeddings))
         self.register_buffer('last_reset_epoch', torch.zeros(1))
@@ -100,7 +100,7 @@ class EMAVectorQuantizer(nn.Module):
         avg_probs = torch.mean(encodings, dim=0)
         perplexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs + 1e-10)))
         
-        return quantized, commitment_loss, (perplexity, encoding_indices, encodings)
+        return quantized, commitment_loss, (perplexity, encoding_indices, encodings) 
     
     def expand_codebook(self, new_size):
         """扩展码本大小，保留现有码元并添加新码元"""
@@ -132,8 +132,8 @@ class EMAVectorQuantizer(nn.Module):
                 indices = torch.randint(0, old_size, (new_size - old_size,), device=device)
                 
             new_embeddings = old_weight[indices].clone()
-            # 添加小随机扰动
-            new_embeddings += torch.randn_like(new_embeddings) * 0.1
+            # 增加随机扰动大小，从0.1增加到0.2
+            new_embeddings += torch.randn_like(new_embeddings) * 0.2
             new_embedding.weight.data[old_size:] = new_embeddings
         
         # 替换嵌入层
@@ -183,7 +183,7 @@ class EMAVectorQuantizer(nn.Module):
                     
                     # 复制活跃码元的权重并添加随机扰动
                     self.embedding.weight.data[dead_idx] = self.embedding.weight.data[live_idx].clone()
-                    self.embedding.weight.data[dead_idx] += torch.randn_like(self.embedding.weight.data[dead_idx]) * 0.1
+                    self.embedding.weight.data[dead_idx] += torch.randn_like(self.embedding.weight.data[dead_idx]) * 0.2
                     
                     # 重置EMA统计
                     self.ema_cluster_size[dead_idx] = self.ema_cluster_size[live_idx] * 0.1
