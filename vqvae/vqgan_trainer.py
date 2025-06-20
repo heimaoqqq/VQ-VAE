@@ -146,7 +146,7 @@ class VQGANTrainer:
             'Commit': commitment_loss.item(), 
             'Perplexity': perplexity.item(),
             'originals': real_imgs, 
-            'reconstructions': decoded_imgs.clamp(0, 1) # Clamp for valid image range
+            'reconstructions': decoded_imgs  # 移除clamp操作，保持原始范围
         }
 
     def _run_epoch(self, dataloader, is_train, epoch, num_epochs):
@@ -254,10 +254,18 @@ class VQGANTrainer:
             print(f"Saved best model checkpoint to {self.checkpoint_path}")
 
     def _save_sample_images(self, epoch, originals, reconstructions):
+        # 逆归一化函数，将[-1,1]范围的图像转回[0,1]范围
+        def denormalize(images):
+            return images * 0.5 + 0.5
+        
+        # 应用逆归一化
+        originals = denormalize(originals)
+        reconstructions = denormalize(reconstructions)
+        
         num_samples = min(originals.size(0), 8)
         comparison = torch.cat([originals[:num_samples], reconstructions[:num_samples]])
         save_path = os.path.join(self.sample_dir, f'reconstruction_epoch_{epoch:04d}.png')
-        save_image(comparison, save_path, nrow=num_samples, normalize=True)
+        save_image(comparison, save_path, nrow=num_samples, normalize=False)
 
     def load_checkpoint(self):
         if not os.path.isfile(self.checkpoint_path):
