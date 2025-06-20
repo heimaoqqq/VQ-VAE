@@ -97,8 +97,6 @@ def main(config):
         config.epochs, 
         early_stopping_patience=config.early_stopping_patience,
         skip_optimizer=config.skip_optimizer,
-        strict_loading=config.strict_loading,
-        lr_scale=config.lr_scale,
         resume_training=not config.fresh_start
     )
     print("Training finished.")
@@ -142,8 +140,6 @@ if __name__ == '__main__':
     # 恢复训练选项
     parser.add_argument('--checkpoint_path', type=str, default=None, help='自定义检查点文件路径')
     parser.add_argument('--skip_optimizer', action='store_true', help='跳过加载优化器状态')
-    parser.add_argument('--strict_loading', action='store_true', help='严格加载模型权重（不允许缺失或多余的键）')
-    parser.add_argument('--lr_scale', type=float, default=1.0, help='恢复训练时的学习率缩放因子')
     parser.add_argument('--fresh_start', action='store_true', help='从头开始训练，忽略现有检查点')
 
     config = parser.parse_args()

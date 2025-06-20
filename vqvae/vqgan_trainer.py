@@ -189,8 +189,7 @@ class VQGANTrainer:
         return avg_metrics, all_samples
 
     def train(self, train_loader, val_loader, epochs, early_stopping_patience=0, 
-             smoke_test=False, skip_optimizer=False, strict_loading=False, lr_scale=1.0,
-             resume_training=True):
+             smoke_test=False, skip_optimizer=False, resume_training=True):
         """
         训练模型
         
@@ -201,16 +200,10 @@ class VQGANTrainer:
             early_stopping_patience: 早停耐心值，0表示禁用早停
             smoke_test: 是否进行冒烟测试（只训练1轮）
             skip_optimizer: 是否跳过加载优化器状态
-            strict_loading: 是否严格加载模型权重
-            lr_scale: 恢复训练时的学习率缩放因子
             resume_training: 是否从检查点恢复训练，False表示从头开始
         """
         if resume_training:
-            load_success = self.load_checkpoint(
-                skip_optimizer=skip_optimizer, 
-                strict_model_loading=strict_loading,
-                lr_scale=lr_scale
-            )
+            load_success = self.load_checkpoint(skip_optimizer=skip_optimizer)
             if not load_success:
                 print("检查点加载失败，将从头开始训练")
                 self.start_epoch = 1
@@ -281,6 +274,9 @@ class VQGANTrainer:
         print("训练完成。")
 
     def save_checkpoint(self, epoch, is_best=False):
+        """
+        保存检查点，包含所有必要的训练状态
+        """
         checkpoint = {
             'epoch': epoch,
             'best_val_loss': self.best_val_loss,
@@ -293,11 +289,24 @@ class VQGANTrainer:
             'g_scaler_state_dict': self.g_scaler.state_dict(),
             'd_scaler_state_dict': self.d_scaler.state_dict(),
             'codebook_stats': self.codebook_stats,
+            'model_config': {
+                'vq_num_embed': self.vqgan.quantize.num_embeddings,
+                'vq_embed_dim': self.vqgan.config['vq_embed_dim'],
+                'commitment_loss_beta': self.vqgan.config['commitment_loss_beta'],
+                'ema_decay': self.vqgan.config['ema_decay']
+            }
         }
         
         if is_best:
             torch.save(checkpoint, self.checkpoint_path)
-            print(f"Saved best model checkpoint to {self.checkpoint_path}")
+            print(f"已保存最佳模型检查点到 {self.checkpoint_path}")
+            
+            # 同时保存一个不包含优化器状态的轻量版检查点
+            light_checkpoint = {k: v for k, v in checkpoint.items() 
+                              if not any(x in k for x in ['optimizer', 'scheduler', 'scaler'])}
+            light_path = self.checkpoint_path.replace('.pt', '_light.pt')
+            torch.save(light_checkpoint, light_path)
+            print(f"已保存轻量版检查点（不含优化器状态）到 {light_path}")
 
     def _save_sample_images(self, epoch, originals, reconstructions):
         # 逆归一化函数，将[-1,1]范围的图像转回[0,1]范围
@@ -313,71 +322,42 @@ class VQGANTrainer:
         save_path = os.path.join(self.sample_dir, f'reconstruction_epoch_{epoch:04d}.png')
         save_image(comparison, save_path, nrow=num_samples, normalize=False)
 
-    def load_checkpoint(self, skip_optimizer=False, strict_model_loading=False, lr_scale=1.0):
+    def load_checkpoint(self, skip_optimizer=False):
         """
-        加载检查点，支持更灵活的选项
+        加载检查点
         
         参数:
-            skip_optimizer (bool): 是否跳过加载优化器状态
-            strict_model_loading (bool): 是否严格加载模型权重（不允许缺失或多余的键）
-            lr_scale (float): 学习率缩放因子，用于从中断处恢复时调整学习率
+            skip_optimizer: 是否跳过加载优化器状态
         """
         if not os.path.isfile(self.checkpoint_path):
-            print("No checkpoint found, starting from scratch.")
-            return
+            print("未找到检查点，将从头开始训练。")
+            return False
 
-        print(f"Loading checkpoint from {self.checkpoint_path}")
+        print(f"正在从 {self.checkpoint_path} 加载检查点")
         try:
             checkpoint = torch.load(self.checkpoint_path, map_location=self.device)
             
-            # 加载模型权重，处理可能的结构变化
-            try:
-                self.vqgan.load_state_dict(checkpoint['vqgan_state_dict'], strict=strict_model_loading)
-                print("VQGAN模型权重加载成功")
-            except RuntimeError as e:
-                if "size mismatch" in str(e) and "quantize" in str(e):
-                    print("检测到码本大小不匹配，尝试调整...")
-                    current_codebook_size = self.vqgan.quantize.num_embeddings
-                    checkpoint_size = None
-                    
-                    # 尝试从错误信息中提取码本大小
-                    import re
-                    size_match = re.search(r'copying a param with shape torch.Size\(\[(\d+)', str(e))
-                    if size_match:
-                        checkpoint_size = int(size_match.group(1))
-                        print(f"检查点码本大小: {checkpoint_size}, 当前码本大小: {current_codebook_size}")
-                    
-                    if not strict_model_loading:
-                        print("使用非严格模式，尝试加载兼容的权重...")
-                        # 创建新的状态字典，只包含兼容的键
-                        compatible_dict = {}
-                        checkpoint_dict = checkpoint['vqgan_state_dict']
-                        model_dict = self.vqgan.state_dict()
-                        
-                        for k, v in checkpoint_dict.items():
-                            if k in model_dict and v.shape == model_dict[k].shape:
-                                compatible_dict[k] = v
-                        
-                        # 加载兼容的权重
-                        self.vqgan.load_state_dict(compatible_dict, strict=False)
-                        print(f"已加载 {len(compatible_dict)}/{len(model_dict)} 个兼容的参数")
-                    else:
-                        print("严格加载模式下无法处理码本大小不匹配，请调整模型配置或使用非严格模式")
-                        return
-                else:
-                    print(f"加载模型权重时出错: {e}")
-                    if strict_model_loading:
-                        raise
-                    else:
-                        print("使用非严格模式继续...")
+            # 检查模型配置是否匹配
+            if 'model_config' in checkpoint:
+                config = checkpoint['model_config']
+                current_config = {
+                    'vq_num_embed': self.vqgan.quantize.num_embeddings,
+                    'vq_embed_dim': self.vqgan.config['vq_embed_dim']
+                }
+                
+                if config['vq_num_embed'] != current_config['vq_num_embed']:
+                    print(f"警告：检查点码本大小 ({config['vq_num_embed']}) 与当前模型 ({current_config['vq_num_embed']}) 不匹配")
+                    print("请确保使用正确的 --vq_num_embed 参数")
+                    return False
             
+            # 加载模型权重
             try:
+                self.vqgan.load_state_dict(checkpoint['vqgan_state_dict'])
                 self.discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
-                print("判别器模型权重加载成功")
+                print("模型权重加载成功")
             except Exception as e:
-                print(f"加载判别器权重时出错: {e}")
-                if strict_model_loading:
-                    raise
+                print(f"加载模型权重时出错: {e}")
+                return False
             
             # 根据参数决定是否加载优化器状态
             if not skip_optimizer:
@@ -385,45 +365,24 @@ class VQGANTrainer:
                     self.g_optimizer.load_state_dict(checkpoint['g_optimizer_state_dict'])
                     self.d_optimizer.load_state_dict(checkpoint['d_optimizer_state_dict'])
                     
-                    # 如果需要调整学习率
-                    if lr_scale != 1.0:
-                        for param_group in self.g_optimizer.param_groups:
-                            param_group['lr'] = param_group['lr'] * lr_scale
-                        for param_group in self.d_optimizer.param_groups:
-                            param_group['lr'] = param_group['lr'] * lr_scale
-                        print(f"学习率已按因子 {lr_scale} 调整")
+                    if self.lr_scheduler_g and 'g_scheduler_state_dict' in checkpoint:
+                        self.lr_scheduler_g.load_state_dict(checkpoint['g_scheduler_state_dict'])
+                    if self.lr_scheduler_d and 'd_scheduler_state_dict' in checkpoint:
+                        self.lr_scheduler_d.load_state_dict(checkpoint['d_scheduler_state_dict'])
                     
+                    self.g_scaler.load_state_dict(checkpoint['g_scaler_state_dict'])
+                    self.d_scaler.load_state_dict(checkpoint['d_scaler_state_dict'])
                     print("优化器状态加载成功")
                 except Exception as e:
                     print(f"加载优化器状态时出错: {e}")
                     print("将使用新初始化的优化器")
+                    skip_optimizer = True
             else:
                 print("跳过加载优化器状态")
-            
-            # 加载学习率调度器状态
-            if self.lr_scheduler_g and 'g_scheduler_state_dict' in checkpoint:
-                try:
-                    self.lr_scheduler_g.load_state_dict(checkpoint['g_scheduler_state_dict'])
-                except Exception as e:
-                    print(f"加载生成器学习率调度器时出错: {e}")
-            
-            if self.lr_scheduler_d and 'd_scheduler_state_dict' in checkpoint:
-                try:
-                    self.lr_scheduler_d.load_state_dict(checkpoint['d_scheduler_state_dict'])
-                except Exception as e:
-                    print(f"加载判别器学习率调度器时出错: {e}")
-            
-            # 加载AMP缩放器状态
-            try:
-                self.g_scaler.load_state_dict(checkpoint['g_scaler_state_dict'])
-                self.d_scaler.load_state_dict(checkpoint['d_scaler_state_dict'])
-            except Exception as e:
-                print(f"加载AMP缩放器状态时出错: {e}")
             
             # 加载码本统计信息
             if 'codebook_stats' in checkpoint:
                 self.codebook_stats = checkpoint['codebook_stats']
-                print(f"已加载码本统计信息，包含 {len(self.codebook_stats)} 条记录")
             
             # 设置起始轮次
             self.start_epoch = checkpoint.get('epoch', 0) + 1
@@ -432,9 +391,7 @@ class VQGANTrainer:
             print(f"从轮次 {self.start_epoch} 继续训练，最佳验证损失: {self.best_val_loss:.4f}")
             return True
         except Exception as e:
-            print(f"加载检查点时发生未预期的错误: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"加载检查点时出错: {e}")
             return False
 
     def compute_gradient_penalty(self, real_samples, fake_samples):
