@@ -16,7 +16,7 @@ class CustomVQGAN(nn.Module):
         n_embed: int = 8192,
         embed_dim: int = 256,
         ema_decay: float = 0.999,
-        commitment_loss_beta: float = 0.25,
+        commitment_loss_beta: float = 3.0,
     ):
         super().__init__()
         
@@ -122,6 +122,6 @@ class VQGANConfig:
     vq_embed_dim: int = 256
     scaling_factor: float = 0.18215
     ema_decay: float = 0.999
-    commitment_loss_beta: float = 2.0
+    commitment_loss_beta: float = 3.0
     # Discriminator
     # ... existing code ... 

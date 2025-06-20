@@ -10,7 +10,7 @@ from torchvision.utils import save_image
 import numpy as np
 
 class VQGANTrainer:
-    def __init__(self, vqgan, discriminator, g_optimizer, d_optimizer, lr_scheduler_g, lr_scheduler_d, device, use_amp, checkpoint_path, sample_dir, lambda_gp=10.0, l1_weight=1.0, perceptual_weight=0.01, adversarial_weight=0.8, log_interval=50):
+    def __init__(self, vqgan, discriminator, g_optimizer, d_optimizer, lr_scheduler_g, lr_scheduler_d, device, use_amp, checkpoint_path, sample_dir, lambda_gp=10.0, l1_weight=1.0, perceptual_weight=0.01, adversarial_weight=0.8, entropy_weight=0.1, log_interval=50):
         self.vqgan = vqgan
         self.discriminator = discriminator
         self.g_optimizer = g_optimizer
@@ -24,6 +24,7 @@ class VQGANTrainer:
         self.l1_weight = l1_weight
         self.perceptual_weight = perceptual_weight
         self.adversarial_weight = adversarial_weight
+        self.entropy_weight = entropy_weight  # 添加熵正则化权重
 
         self.checkpoint_path = checkpoint_path
         self.sample_dir = sample_dir
@@ -92,20 +93,33 @@ class VQGANTrainer:
             g_output = self.discriminator(decoded_imgs)
             g_loss_adv = -g_output.mean()
             
+            # 添加码本熵正则化 - 鼓励更均匀的码本使用
+            entropy_loss = torch.tensor(0.0, device=self.device)
+            if self.entropy_weight > 0 and hasattr(self.vqgan.quantize, 'get_codebook_stats'):
+                stats = self.vqgan.quantize.get_codebook_stats()
+                # 熵越大越好，所以我们最小化负熵
+                entropy_loss = -self.entropy_weight * stats['normalized_entropy']
+            
             # Combine all losses for the generator
             # The commitment loss is already scaled by its beta inside the VQGAN model
             g_loss = (self.l1_weight * l1_loss + 
                       self.perceptual_weight * perceptual_loss + 
                       self.adversarial_weight * g_loss_adv + 
-                      commitment_loss) # Directly add the commitment loss
+                      commitment_loss + 
+                      entropy_loss)  # 添加熵损失
 
         self.g_scaler.scale(g_loss).backward()
         self.g_scaler.step(self.g_optimizer)
         self.g_scaler.update()
 
         return {
-            'L1': l1_loss.item(), 'Perceptual': perceptual_loss.item(), 'Adv': g_loss_adv.item(),
-            'Commit': commitment_loss.item(), 'Perplexity': perplexity.item(), 'D': d_loss.item()
+            'L1': l1_loss.item(), 
+            'Perceptual': perceptual_loss.item(), 
+            'Adv': g_loss_adv.item(),
+            'Commit': commitment_loss.item(), 
+            'Entropy': entropy_loss.item() if self.entropy_weight > 0 else 0.0,  # 添加熵损失到指标
+            'Perplexity': perplexity.item(), 
+            'D': d_loss.item()
         }
 
     def _validate_batch(self, batch):
@@ -289,7 +303,7 @@ class VQGANTrainer:
         
         gradients = gradients.view(gradients.size(0), -1)
         gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
-        return gradient_penalty
+        return gradient_penalty 
     
     def monitor_codebook(self, epoch):
         """监控码本使用情况并在必要时扩展码本"""
