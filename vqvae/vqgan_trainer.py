@@ -39,6 +39,9 @@ class VQGANTrainer:
         self.best_val_loss = float('inf')
         self.start_epoch = 1
         
+        # 早停相关
+        self.early_stopping_counter = 0
+        
         # 确保样本目录存在
         os.makedirs(self.sample_dir, exist_ok=True)
         
