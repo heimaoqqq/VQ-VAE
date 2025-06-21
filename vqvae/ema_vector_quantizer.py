@@ -8,7 +8,7 @@ class EMAVectorQuantizer(nn.Module):
     This implementation is based on the standard VQ-VAE-2 and SoundStream papers to
     ensure stable codebook learning and prevent collapse.
     """
-    def __init__(self, num_embeddings, embedding_dim, commitment_cost, decay, epsilon=1e-5):
+    def __init__(self, num_embeddings, embedding_dim, commitment_cost, decay=0.95, epsilon=1e-5):
         super().__init__()
         
         self.embedding_dim = embedding_dim
@@ -28,6 +28,7 @@ class EMAVectorQuantizer(nn.Module):
         # 添加一个计数器用于跟踪码元使用情况
         self.register_buffer('usage_count', torch.zeros(num_embeddings))
         self.register_buffer('last_reset_epoch', torch.zeros(1))
+        self.register_buffer('last_low_usage_reset_epoch', torch.zeros(1))
 
     def forward(self, inputs):
         # inputs: (B, C, H, W) -> (B, H, W, C)
@@ -225,3 +226,52 @@ class EMAVectorQuantizer(nn.Module):
                 "normalized_entropy": normalized_entropy,
                 "total_usage": self.usage_count.sum().item()
             } 
+    
+    def reset_low_usage_codes(self, percentage=0.1, current_epoch=None):
+        """重置使用频率最低的一部分码元
+        
+        参数:
+            percentage: 要重置的码元比例，默认为10%
+            current_epoch: 当前训练轮次
+        """
+        if not self.training or current_epoch is None:
+            return 0
+            
+        # 每5个epoch检查一次低使用率码元
+        if current_epoch - self.last_low_usage_reset_epoch.item() < 5:
+            return 0
+            
+        with torch.no_grad():
+            device = self.embedding.weight.device
+            
+            # 计算要重置的码元数量
+            n_reset = max(1, int(self.num_embeddings * percentage))
+            
+            # 找出使用频率最低的n_reset个码元
+            _, low_usage_indices = torch.topk(self.ema_cluster_size, n_reset, largest=False)
+            
+            if len(low_usage_indices) > 0:
+                # 找出使用最频繁的码元
+                _, top_indices = torch.topk(self.ema_cluster_size, min(100, self.num_embeddings - n_reset))
+                
+                # 为每个低使用率码元随机选择一个高使用率码元
+                for i, low_idx in enumerate(low_usage_indices):
+                    # 随机选择一个高使用率码元
+                    high_idx = top_indices[torch.randint(0, len(top_indices), (1,), device=device).item()]
+                    
+                    # 复制高使用率码元的权重并添加随机扰动
+                    self.embedding.weight.data[low_idx] = self.embedding.weight.data[high_idx].clone()
+                    # 增加扰动幅度，促进多样性
+                    self.embedding.weight.data[low_idx] += torch.randn_like(self.embedding.weight.data[low_idx]) * 0.4
+                    
+                    # 重置EMA统计
+                    self.ema_cluster_size[low_idx] = self.ema_cluster_size[high_idx] * 0.2
+                    self.ema_w[low_idx] = self.ema_w[high_idx] * 0.2
+                    self.usage_count[low_idx] = 0
+                
+                # 更新最后重置时间
+                self.last_low_usage_reset_epoch.fill_(current_epoch)
+                
+                print(f"Reset {len(low_usage_indices)} low usage codes at epoch {current_epoch}")
+            
+            return len(low_usage_indices) 

@@ -256,6 +256,10 @@ class VQGANTrainer:
             # --- 码本监控和扩展 ---
             # 每个epoch都检查码本使用情况
             self.monitor_codebook(epoch)
+            
+            # 重置使用频率最低的码元
+            if hasattr(self.vqgan.quantize, 'reset_low_usage_codes'):
+                self.vqgan.quantize.reset_low_usage_codes(percentage=0.1, current_epoch=epoch)
 
             # --- Checkpoint and Early Stopping ---
             if current_val_loss < self.best_val_loss:

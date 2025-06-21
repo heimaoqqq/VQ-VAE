@@ -3,6 +3,7 @@ import torch.nn as nn
 from diffusers.models.autoencoders.vae import Decoder
 from .ema_vector_quantizer import EMAVectorQuantizer
 from .models.micro_doppler_encoder import MicroDopplerEncoder
+from .models.micro_doppler_decoder import MicroDopplerDecoder
 from dataclasses import dataclass
 from typing import Tuple
 
@@ -16,7 +17,7 @@ class CustomVQGAN(nn.Module):
         latent_channels: int = 256,
         n_embed: int = 8192,
         embed_dim: int = 256,
-        ema_decay: float = 0.999,
+        ema_decay: float = 0.95,
         commitment_loss_beta: float = 3.0,
     ):
         super().__init__()
@@ -39,13 +40,11 @@ class CustomVQGAN(nn.Module):
             decay=ema_decay
         )
 
-        # Decoder
-        self.decoder = Decoder(
+        # 使用专为微多普勒时频图设计的解码器
+        self.decoder = MicroDopplerDecoder(
             in_channels=embed_dim,
             out_channels=out_channels,
-            up_block_types=["UpDecoderBlock2D"] * len(block_out_channels),
-            block_out_channels=block_out_channels,
-            layers_per_block=layers_per_block,
+            base_channels=block_out_channels[0]
         )
 
         self.quant_conv = nn.Conv2d(latent_channels, embed_dim, 1)
