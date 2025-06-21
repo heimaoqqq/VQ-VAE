@@ -1,225 +1,246 @@
+"""
+码本利用率检查工具 - 用于分析VQ-VAE模型的码本使用情况
+"""
+
+import os
 import torch
 import argparse
-from pathlib import Path
-import os
-from tqdm import tqdm
 import numpy as np
-
-# 导入自定义模块
-from vqvae.custom_vqgan import CustomVQGAN
+import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
-from torchvision import datasets, transforms
+from torchvision import transforms
+from torchvision.datasets import ImageFolder
+from tqdm import tqdm
 
-def parse_args():
-    parser = argparse.ArgumentParser(description='VQ-VAE码本利用率分析')
-    parser.add_argument('--model_path', type=str, required=True, help='模型检查点路径')
-    parser.add_argument('--data_dir', type=str, required=True, help='数据集目录')
-    parser.add_argument('--batch_size', type=int, default=32, help='批次大小')
-    parser.add_argument('--device', type=str, default='cuda', help='设备 (cuda/cpu)')
-    
-    # 模型配置参数
-    parser.add_argument('--in_channels', type=int, default=3, help='输入通道数')
-    parser.add_argument('--out_channels', type=int, default=3, help='输出通道数')
-    parser.add_argument('--block_out_channels', type=int, nargs='+', default=[64, 128, 256], help='每个块的输出通道数')
-    parser.add_argument('--layers_per_block', type=int, default=2, help='每个块的层数')
-    parser.add_argument('--latent_channels', type=int, default=256, help='潜在通道数')
-    parser.add_argument('--n_embed', type=int, default=8192, help='码本大小')
-    parser.add_argument('--embed_dim', type=int, default=256, help='嵌入维度')
-    
-    return parser.parse_args()
-
-def create_dataloader(data_dir, batch_size):
-    """创建数据加载器"""
-    transform = transforms.Compose([
-        transforms.Resize((256, 256)),
-        transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-    ])
-    
-    # 检查路径是否存在
-    if not os.path.exists(data_dir):
-        raise ValueError(f"数据目录不存在: {data_dir}")
+def load_model(model_path, device):
+    """加载训练好的VQ-VAE模型"""
+    try:
+        checkpoint = torch.load(model_path, map_location=device)
         
-    dataset = datasets.ImageFolder(data_dir, transform=transform)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
-    
-    print(f"数据集加载完成，共 {len(dataset)} 个样本")
-    return dataloader
+        # 从检查点中获取模型配置
+        if 'model_config' in checkpoint:
+            config = checkpoint['model_config']
+            print(f"模型配置: {config}")
+        else:
+            print("警告: 检查点中没有找到模型配置")
+            
+        # 从检查点中获取VQGAN状态字典
+        if 'vqgan_state_dict' in checkpoint:
+            vqgan_state_dict = checkpoint['vqgan_state_dict']
+            print(f"成功加载VQGAN状态字典，包含 {len(vqgan_state_dict)} 个键")
+            
+            # 获取码本大小
+            if 'quantize.embedding.weight' in vqgan_state_dict:
+                codebook_shape = vqgan_state_dict['quantize.embedding.weight'].shape
+                print(f"码本形状: {codebook_shape}")
+                n_embed = codebook_shape[0]
+                embed_dim = codebook_shape[1]
+            else:
+                print("警告: 未找到码本权重")
+                n_embed = 512  # 默认值
+                embed_dim = 256  # 默认值
+                
+            # 导入模型类
+            from vqvae.custom_vqgan import CustomVQGAN
+            
+            # 创建模型实例
+            vqgan = CustomVQGAN(
+                n_embed=n_embed,
+                embed_dim=embed_dim
+            ).to(device)
+            
+            # 加载状态字典
+            vqgan.load_state_dict(vqgan_state_dict)
+            print("模型加载成功")
+            
+            return vqgan
+        else:
+            print("错误: 检查点中没有找到VQGAN状态字典")
+            return None
+    except Exception as e:
+        print(f"加载模型时出错: {e}")
+        return None
 
-def analyze_codebook_utilization(model, dataloader, device):
-    """
-    分析码本利用率
-    
-    参数:
-        model: VQ-VAE模型
-        dataloader: 数据加载器
-        device: 设备
-    """
-    model.eval()
-    model.to(device)
-    
-    # 初始化码本使用计数
-    codebook_size = model.quantize.num_embeddings
-    code_usage = torch.zeros(codebook_size, dtype=torch.int64, device=device)
-    total_codes = 0
-    
-    print(f"分析码本利用率 (码本大小: {codebook_size})...")
+def analyze_codebook_utilization(vqgan, dataloader, device, temperature=1.0):
+    """分析码本利用率"""
+    vqgan.eval()
+    all_indices = []
     
     with torch.no_grad():
-        for images, _ in tqdm(dataloader, desc="处理批次"):
+        for batch in tqdm(dataloader, desc="处理批次"):
+            images, _ = batch
             images = images.to(device)
             
-            # 编码图像
-            z = model.encode(images)
+            # 前向传播
+            output = vqgan(images, return_dict=True, temperature=temperature)
             
-            # 获取量化索引
-            _, _, quantize_info = model.quantize(z)
-            indices = quantize_info[2]  # 获取量化索引
-            
-            # 统计每个码元的使用次数
-            for idx in range(codebook_size):
-                code_usage[idx] += torch.sum(indices == idx).item()
-            
-            # 统计总码元使用次数
-            total_codes += indices.numel()
+            # 获取索引
+            if "indices" in output:
+                indices = output["indices"].flatten().cpu().numpy()
+                all_indices.extend(indices)
     
-    # 计算每个码元的使用频率
-    code_freq = code_usage.float() / total_codes
+    # 转换为numpy数组
+    all_indices = np.array(all_indices)
     
-    # 计算使用过的码元数量
-    used_codes = torch.sum(code_usage > 0).item()
-    utilization_rate = used_codes / codebook_size
+    # 计算唯一索引
+    unique_indices = np.unique(all_indices)
+    
+    # 计算码本利用率
+    n_embed = vqgan.quantize.num_embeddings
+    utilization = len(unique_indices) / n_embed
+    
+    # 计算每个索引的使用频率
+    index_counts = np.zeros(n_embed)
+    for idx in range(n_embed):
+        index_counts[idx] = np.sum(all_indices == idx)
+    
+    # 计算概率分布
+    probs = index_counts / len(all_indices)
     
     # 计算熵
-    probs = code_freq.cpu().numpy()
-    probs = probs[probs > 0]  # 只考虑非零概率
-    entropy = -np.sum(probs * np.log2(probs))
-    max_entropy = np.log2(codebook_size)
-    normalized_entropy = entropy / max_entropy if max_entropy > 0 else 0
+    valid_probs = probs[probs > 0]
+    entropy = -np.sum(valid_probs * np.log2(valid_probs + 1e-10))
+    max_entropy = np.log2(n_embed)
+    normalized_entropy = entropy / max_entropy
     
-    # 计算前10个最常用的码元
-    top_k = 10
-    if used_codes > 0:
-        top_indices = torch.topk(code_usage, min(top_k, used_codes))
-        top_usage = [(idx.item(), count.item(), (count.item() / total_codes) * 100) 
-                     for idx, count in zip(top_indices.indices, top_indices.values)]
-    else:
-        top_usage = []
+    # 计算码本使用的不均匀性
+    non_zero_probs = probs[probs > 0]
+    gini = 1 - np.sum((non_zero_probs / np.mean(non_zero_probs)) ** 2) / len(non_zero_probs)
     
-    # 打印结果
-    print("\n===== 码本利用率分析结果 =====")
-    print(f"总码本大小: {codebook_size}")
-    print(f"使用过的码元数量: {used_codes}")
-    print(f"码本利用率: {utilization_rate * 100:.2f}%")
-    print(f"码本熵值: {entropy:.4f}")
-    print(f"归一化熵: {normalized_entropy:.4f}")
-    
-    print("\n最常用的码元:")
-    for i, (idx, count, percentage) in enumerate(top_usage):
-        print(f"  {i+1}. 码元 {idx}: {count} 次 ({percentage:.2f}%)")
-    
-    # 计算使用频率的分布
-    if used_codes > 0:
-        non_zero_freqs = code_freq[code_usage > 0].cpu().numpy()
-        percentiles = np.percentile(non_zero_freqs, [25, 50, 75, 90, 95, 99])
-        
-        print("\n使用频率分布:")
-        print(f"  25%分位数: {percentiles[0]*100:.6f}%")
-        print(f"  中位数: {percentiles[1]*100:.6f}%")
-        print(f"  75%分位数: {percentiles[2]*100:.6f}%")
-        print(f"  90%分位数: {percentiles[3]*100:.6f}%")
-        print(f"  95%分位数: {percentiles[4]*100:.6f}%")
-        print(f"  99%分位数: {percentiles[5]*100:.6f}%")
-        print(f"  最大值: {torch.max(code_freq).item()*100:.6f}%")
-    
+    # 返回结果
     return {
-        "codebook_size": codebook_size,
-        "used_codes": used_codes,
-        "utilization_rate": utilization_rate,
+        "n_embed": n_embed,
+        "unique_indices": unique_indices,
+        "utilization": utilization,
         "entropy": entropy,
         "normalized_entropy": normalized_entropy,
-        "top_usage": top_usage
+        "gini": gini,
+        "index_counts": index_counts,
+        "probs": probs
     }
 
-def main():
-    args = parse_args()
+def plot_codebook_usage(results, save_path=None):
+    """绘制码本使用情况"""
+    n_embed = results["n_embed"]
+    probs = results["probs"]
     
-    # 检查CUDA是否可用
-    if args.device == 'cuda' and not torch.cuda.is_available():
-        print("CUDA不可用，切换到CPU")
-        args.device = 'cpu'
-    else:
-        print(f"使用设备: {args.device}")
+    # 创建图形
+    plt.figure(figsize=(12, 8))
     
-    # 检查模型路径
-    if not os.path.exists(args.model_path):
-        raise ValueError(f"模型文件不存在: {args.model_path}")
+    # 绘制码本使用频率
+    plt.subplot(2, 1, 1)
+    plt.bar(range(n_embed), probs)
+    plt.title(f"码本使用频率 (利用率: {results['utilization']*100:.2f}%)")
+    plt.xlabel("码元索引")
+    plt.ylabel("使用频率")
     
-    # 创建模型配置
-    model_config = {
-        'in_channels': args.in_channels,
-        'out_channels': args.out_channels,
-        'block_out_channels': args.block_out_channels,
-        'layers_per_block': args.layers_per_block,
-        'latent_channels': args.latent_channels,
-        'n_embed': args.n_embed,
-        'embed_dim': args.embed_dim
-    }
+    # 绘制码本使用频率（对数尺度）
+    plt.subplot(2, 1, 2)
+    plt.bar(range(n_embed), probs)
+    plt.yscale("log")
+    plt.title(f"码本使用频率（对数尺度）(熵: {results['entropy']:.2f}, 归一化熵: {results['normalized_entropy']:.2f})")
+    plt.xlabel("码元索引")
+    plt.ylabel("使用频率（对数尺度）")
+    
+    plt.tight_layout()
+    
+    # 保存图形
+    if save_path:
+        plt.savefig(save_path)
+        print(f"图形已保存到 {save_path}")
+    
+    plt.show()
+
+def main(args):
+    # 设置设备
+    device = torch.device(args.device)
     
     # 加载模型
-    print(f"加载模型: {args.model_path}")
-    model = CustomVQGAN(**model_config)
-    
-    # 加载检查点
-    try:
-        checkpoint = torch.load(args.model_path, map_location=args.device)
-        print(f"成功加载检查点，检查点类型: {type(checkpoint)}")
-        
-        # 打印检查点的键以便调试
-        if isinstance(checkpoint, dict):
-            print(f"检查点包含以下键: {list(checkpoint.keys())}")
-    except Exception as e:
-        print(f"加载检查点时出错: {e}")
+    vqgan = load_model(args.model_path, device)
+    if vqgan is None:
         return
     
-    # 智能地寻找正确的state_dict
-    state_dict_key = None
-    if isinstance(checkpoint, dict):
-        if 'generator_state_dict' in checkpoint:
-            state_dict_key = 'generator_state_dict'
-        elif 'vqgan_state_dict' in checkpoint:
-            state_dict_key = 'vqgan_state_dict'
-        elif 'model_state_dict' in checkpoint:
-            state_dict_key = 'model_state_dict'
-
-        if state_dict_key:
-            print(f"使用键 '{state_dict_key}' 加载模型权重")
-            try:
-                model.load_state_dict(checkpoint[state_dict_key])
-            except Exception as e:
-                print(f"加载模型权重时出错: {e}")
-                return
-        else:
-            # 如果上面都找不到，就尝试直接加载整个文件
-            try:
-                model.load_state_dict(checkpoint)
-            except Exception as e:
-                print(f"尝试直接加载模型权重时出错: {e}")
-                return
-    else:
-        print("检查点不是字典类型，无法加载模型")
-        return
+    # 创建数据变换
+    transform = transforms.Compose([
+        transforms.Resize((args.image_size, args.image_size)),
+        transforms.ToTensor(),
+        transforms.Normalize([0.5], [0.5])  # 归一化到[-1, 1]
+    ])
+    
+    # 加载数据集
+    dataset = ImageFolder(root=args.data_dir, transform=transform)
     
     # 创建数据加载器
-    print(f"加载数据集: {args.data_dir}")
-    try:
-        dataloader = create_dataloader(args.data_dir, args.batch_size)
-    except Exception as e:
-        print(f"加载数据集时出错: {e}")
-        return
+    dataloader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=True
+    )
+    
+    print(f"数据集大小: {len(dataset)}")
     
     # 分析码本利用率
-    analyze_codebook_utilization(model, dataloader, args.device)
+    results = analyze_codebook_utilization(vqgan, dataloader, device, args.temperature)
+    
+    # 打印结果
+    print("\n=== 码本利用率分析 ===")
+    print(f"码本大小: {results['n_embed']}")
+    print(f"使用的唯一码元数量: {len(results['unique_indices'])}")
+    print(f"码本利用率: {results['utilization']*100:.2f}%")
+    print(f"熵: {results['entropy']:.4f}")
+    print(f"归一化熵: {results['normalized_entropy']:.4f}")
+    print(f"基尼系数: {results['gini']:.4f}")
+    
+    # 绘制码本使用情况
+    if args.plot:
+        os.makedirs(args.output_dir, exist_ok=True)
+        plot_path = os.path.join(args.output_dir, "codebook_usage.png")
+        plot_codebook_usage(results, plot_path)
+    
+    # 保存详细结果
+    if args.save_details:
+        import json
+        os.makedirs(args.output_dir, exist_ok=True)
+        
+        # 将numpy数组转换为列表
+        save_results = {
+            "n_embed": int(results["n_embed"]),
+            "unique_indices": results["unique_indices"].tolist(),
+            "utilization": float(results["utilization"]),
+            "entropy": float(results["entropy"]),
+            "normalized_entropy": float(results["normalized_entropy"]),
+            "gini": float(results["gini"]),
+            "index_counts": results["index_counts"].tolist(),
+            "probs": results["probs"].tolist()
+        }
+        
+        # 保存为JSON文件
+        json_path = os.path.join(args.output_dir, "codebook_stats.json")
+        with open(json_path, "w") as f:
+            json.dump(save_results, f, indent=2)
+        
+        print(f"详细结果已保存到 {json_path}")
 
 if __name__ == "__main__":
-    main() 
+    parser = argparse.ArgumentParser(description="VQ-VAE码本利用率分析工具")
+    
+    # 模型相关参数
+    parser.add_argument("--model_path", type=str, required=True, help="模型检查点路径")
+    parser.add_argument("--data_dir", type=str, required=True, help="数据集目录")
+    parser.add_argument("--output_dir", type=str, default="./codebook_analysis", help="输出目录")
+    
+    # 数据相关参数
+    parser.add_argument("--image_size", type=int, default=256, help="图像大小")
+    parser.add_argument("--batch_size", type=int, default=32, help="批次大小")
+    parser.add_argument("--num_workers", type=int, default=4, help="数据加载器工作线程数")
+    
+    # 分析相关参数
+    parser.add_argument("--temperature", type=float, default=1.0, help="温度参数")
+    parser.add_argument("--plot", action="store_true", help="是否绘制码本使用情况")
+    parser.add_argument("--save_details", action="store_true", help="是否保存详细结果")
+    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="设备")
+    
+    args = parser.parse_args()
+    main(args) 

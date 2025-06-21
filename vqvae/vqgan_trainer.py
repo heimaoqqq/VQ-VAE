@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 from .models.losses import PerceptualLoss
 
 class VQGANTrainer:
-    def __init__(self, vqgan, discriminator, g_optimizer, d_optimizer, lr_scheduler_g, lr_scheduler_d, device, use_amp, checkpoint_path, sample_dir, lambda_gp=10.0, l1_weight=1.0, perceptual_weight=0.005, adversarial_weight=0.8, entropy_weight=0.3, log_interval=50, reset_low_usage_interval=5, reset_low_usage_percentage=0.1, temperature=1.0):
+    def __init__(self, vqgan, discriminator, g_optimizer, d_optimizer, lr_scheduler_g, lr_scheduler_d, device, use_amp, checkpoint_path, sample_dir, lambda_gp=10.0, l1_weight=1.0, perceptual_weight=0.005, adversarial_weight=0.8, entropy_weight=0.3, log_interval=50, reset_low_usage_interval=5, reset_low_usage_percentage=0.1, temperature=1.0, disable_codebook_expansion=False):
         self.vqgan = vqgan
         self.discriminator = discriminator
         self.g_optimizer = g_optimizer
@@ -62,6 +62,9 @@ class VQGANTrainer:
         self.codebook_stats = []
         self.max_codebook_size = 512  # 最大码本大小设置为512
         self.expansion_threshold = 0.8  # 码本利用率超过此值时扩展
+        
+        # 是否禁用码本自动扩展
+        self.disable_codebook_expansion = disable_codebook_expansion
 
     def _train_batch(self, batch):
         real_imgs, _ = batch
@@ -616,7 +619,7 @@ class VQGANTrainer:
         print(f"总使用次数: {stats['total_usage']:.0f}")
         
         # 如果码本利用率高于阈值，考虑扩展码本
-        if stats['utilization'] > self.expansion_threshold and self.vqgan.quantize.num_embeddings < self.max_codebook_size:
+        if not self.disable_codebook_expansion and stats['utilization'] > self.expansion_threshold and self.vqgan.quantize.num_embeddings < self.max_codebook_size:
             # 计算新的码本大小，每次增加25%
             new_size = min(
                 int(self.vqgan.quantize.num_embeddings * 1.25),
@@ -631,6 +634,8 @@ class VQGANTrainer:
                 if self.vqgan.quantize.expand_codebook(new_size):
                     # 更新优化器以包含新参数
                     self._update_optimizers_after_expansion()
+        elif self.disable_codebook_expansion:
+            print("码本自动扩展已禁用")
         
         # 重置低使用率码元
         if epoch > 0:
