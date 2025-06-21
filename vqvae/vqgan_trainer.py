@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 from .models.losses import PerceptualLoss
 
 class VQGANTrainer:
-    def __init__(self, vqgan, discriminator, g_optimizer, d_optimizer, lr_scheduler_g, lr_scheduler_d, device, use_amp, checkpoint_path, sample_dir, lambda_gp=10.0, l1_weight=1.0, perceptual_weight=0.005, adversarial_weight=0.8, entropy_weight=0.3, log_interval=50, reset_low_usage_interval=5, reset_low_usage_percentage=0.1):
+    def __init__(self, vqgan, discriminator, g_optimizer, d_optimizer, lr_scheduler_g, lr_scheduler_d, device, use_amp, checkpoint_path, sample_dir, lambda_gp=10.0, l1_weight=1.0, perceptual_weight=0.005, adversarial_weight=0.8, entropy_weight=0.3, log_interval=50, reset_low_usage_interval=5, reset_low_usage_percentage=0.1, temperature=1.0):
         self.vqgan = vqgan
         self.discriminator = discriminator
         self.g_optimizer = g_optimizer
@@ -33,6 +33,9 @@ class VQGANTrainer:
         self.perceptual_weight = perceptual_weight
         self.adversarial_weight = adversarial_weight
         self.entropy_weight = entropy_weight
+        
+        # 温度参数
+        self.temperature = temperature
         
         # 日志和检查点
         self.log_interval = log_interval
@@ -77,7 +80,7 @@ class VQGANTrainer:
             
             # Get reconstructed images
             with torch.no_grad():
-                decoded_imgs_detached = self.vqgan(real_imgs, return_dict=True)["decoded_imgs"].detach()
+                decoded_imgs_detached = self.vqgan(real_imgs, return_dict=True, temperature=self.temperature)["decoded_imgs"].detach()
             
             # Real images loss
             real_pred = self.discriminator(real_imgs)
@@ -127,7 +130,7 @@ class VQGANTrainer:
             self.g_optimizer.zero_grad()
             
             # Forward pass
-            vq_output = self.vqgan(real_imgs, return_dict=True)
+            vq_output = self.vqgan(real_imgs, return_dict=True, temperature=self.temperature)
             decoded_imgs = vq_output["decoded_imgs"]
             vq_loss = vq_output["commitment_loss"]
             perplexity = vq_output["perplexity"]
@@ -219,7 +222,7 @@ class VQGANTrainer:
         real_imgs = real_imgs.to(self.device)
         with torch.no_grad():
             with torch.amp.autocast(device_type='cuda', enabled=self.use_amp):
-                vqgan_output = self.vqgan(real_imgs, return_dict=True)
+                vqgan_output = self.vqgan(real_imgs, return_dict=True, temperature=self.temperature)
                 decoded_imgs = vqgan_output["decoded_imgs"]
                 commitment_loss = vqgan_output["commitment_loss"]
                 perplexity = vqgan_output["perplexity"]

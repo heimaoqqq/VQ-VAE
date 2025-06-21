@@ -108,7 +108,8 @@ def main(config):
         entropy_weight=config.entropy_weight,
         log_interval=config.log_interval,
         reset_low_usage_interval=config.reset_low_usage_interval,
-        reset_low_usage_percentage=config.reset_low_usage_percentage
+        reset_low_usage_percentage=config.reset_low_usage_percentage,
+        temperature=config.temperature
     )
 
     # Start training
@@ -148,6 +149,7 @@ if __name__ == '__main__':
     parser.add_argument('--disc_channels', type=int, default=64, help='Initial channels for discriminator')
     parser.add_argument('--commitment_loss_beta', type=float, default=3.0, help='Commitment loss beta factor (从2.0增加到3.0)')
     parser.add_argument('--ema_decay', type=float, default=0.95, help='EMA decay rate for codebook updates (从0.999降低为0.95)')
+    parser.add_argument('--temperature', type=float, default=1.0, help='温度参数，控制码本选择的随机性，值越大选择越随机')
     parser.add_argument('--reset_low_usage_interval', type=int, default=5, help='每多少个epoch重置低使用率码元')
     parser.add_argument('--reset_low_usage_percentage', type=float, default=0.1, help='重置使用率最低的码元比例')
     parser.add_argument('--use_micro_doppler_encoder', action='store_true', help='使用微多普勒专用编码器')
