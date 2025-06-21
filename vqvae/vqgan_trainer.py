@@ -50,7 +50,7 @@ class VQGANTrainer:
         self.reset_low_usage_percentage = reset_low_usage_percentage
         
         # 初始化感知损失
-        self.perceptual_loss = PerceptualLoss().to(device)
+        self.perceptual_loss = PerceptualLoss(device=device).to(device)
 
         # 码本监控相关
         self.codebook_stats = []
