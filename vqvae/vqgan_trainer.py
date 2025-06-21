@@ -109,7 +109,7 @@ class VQGANTrainer:
             # Forward pass
             vq_output = self.vqgan(real_imgs, return_dict=True)
             decoded_imgs = vq_output["decoded_imgs"]
-            vq_loss = vq_output["loss"]
+            vq_loss = vq_output["commitment_loss"]
             perplexity = vq_output["perplexity"]
             
             # Reconstruction loss (L1)
