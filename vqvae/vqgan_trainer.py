@@ -132,6 +132,10 @@ class VQGANTrainer:
             vq_loss = vq_output["commitment_loss"]
             perplexity = vq_output["perplexity"]
             
+            # 存储当前批次的索引信息，用于码本利用率监控
+            if "indices" in vq_output:
+                self.last_batch_indices = vq_output["indices"].detach().flatten()
+            
             # 获取熵值，如果没有则使用默认值0
             entropy = vq_output.get("entropy", torch.tensor(0.0, device=self.device))
             normalized_entropy = vq_output.get("normalized_entropy", torch.tensor(0.0, device=self.device))
@@ -577,9 +581,35 @@ class VQGANTrainer:
         
         # 打印码本使用情况
         print(f"\n=== 码本统计 (Epoch {epoch}) ===")
-        print(f"活跃码元: {stats['active_size']}/{self.vqgan.quantize.num_embeddings} ({stats['utilization']*100:.1f}%)")
-        print(f"熵值: {stats['entropy']:.4f}")
-        print(f"归一化熵: {stats['normalized_entropy']:.4f}")
+        print(f"活跃码元 (累积EMA): {stats['active_size']}/{self.vqgan.quantize.num_embeddings} ({stats['utilization']*100:.1f}%)")
+        
+        # 添加: 计算实际码本利用率
+        if hasattr(self, 'last_batch_indices') and self.last_batch_indices is not None:
+            unique_indices = torch.unique(self.last_batch_indices)
+            real_utilization = len(unique_indices) / self.vqgan.quantize.num_embeddings
+            print(f"实际码本利用率 (当前批次): {len(unique_indices)}/{self.vqgan.quantize.num_embeddings} ({real_utilization*100:.1f}%)")
+            
+            # 计算当前批次的熵
+            if len(unique_indices) > 0:
+                # 计算每个码元的使用频率
+                index_counts = torch.zeros(self.vqgan.quantize.num_embeddings, device=self.last_batch_indices.device)
+                for idx in range(self.vqgan.quantize.num_embeddings):
+                    index_counts[idx] = torch.sum(self.last_batch_indices == idx).item()
+                
+                # 计算概率分布
+                probs = index_counts / torch.sum(index_counts)
+                # 只考虑非零概率
+                valid_probs = probs[probs > 0]
+                # 计算熵
+                batch_entropy = -torch.sum(valid_probs * torch.log2(valid_probs + 1e-10)).item()
+                max_entropy = torch.log2(torch.tensor(self.vqgan.quantize.num_embeddings, dtype=torch.float, device=probs.device)).item()
+                batch_norm_entropy = batch_entropy / max_entropy
+                
+                print(f"当前批次熵值: {batch_entropy:.4f}")
+                print(f"当前批次归一化熵: {batch_norm_entropy:.4f}")
+        
+        print(f"累积熵值: {stats['entropy']:.4f}")
+        print(f"累积归一化熵: {stats['normalized_entropy']:.4f}")
         print(f"总使用次数: {stats['total_usage']:.0f}")
         
         # 如果码本利用率高于阈值，考虑扩展码本

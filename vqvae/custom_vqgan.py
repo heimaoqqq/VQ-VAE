@@ -73,12 +73,12 @@ class CustomVQGAN(nn.Module):
         h = self.decoder(h)
         return h
 
-    def forward(self, x, return_dict=False):
+    def forward(self, x, return_dict=False, temperature=1.0):
         # 1. Encode
         h = self.encode(x)
         
         # 2. Quantize
-        quant_states, vq_loss, perplexity_info = self.quantize(h)
+        quant_states, vq_loss, perplexity_info = self.quantize(h, temperature=temperature)
         
         # The returned vq_loss is often a dictionary in newer diffusers
         if isinstance(vq_loss, dict):

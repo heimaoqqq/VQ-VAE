@@ -30,7 +30,7 @@ class EMAVectorQuantizer(nn.Module):
         self.register_buffer('last_reset_epoch', torch.zeros(1))
         self.register_buffer('last_low_usage_reset_epoch', torch.zeros(1))
 
-    def forward(self, inputs):
+    def forward(self, inputs, temperature=1.0):
         # inputs: (B, C, H, W) -> (B, H, W, C)
         inputs = inputs.permute(0, 2, 3, 1).contiguous()
         flat_input = inputs.view(-1, self.embedding_dim)
@@ -44,6 +44,10 @@ class EMAVectorQuantizer(nn.Module):
             + torch.sum(embedding_weight**2, dim=1)
             - 2 * torch.matmul(flat_input, embedding_weight.t())
         )
+        
+        # 应用温度参数 - 温度越高，选择越随机
+        if temperature != 1.0:
+            distances = distances / temperature
             
         # Find closest encodings
         encoding_indices = torch.argmin(distances, dim=1).unsqueeze(1)
