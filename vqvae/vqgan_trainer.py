@@ -24,8 +24,8 @@ class VQGANTrainer:
         self.lr_scheduler_g = lr_scheduler_g
         self.lr_scheduler_d = lr_scheduler_d
         self.use_amp = use_amp
-        self.g_scaler = torch.amp.GradScaler(device_type=self.device.type, enabled=self.use_amp)
-        self.d_scaler = torch.amp.GradScaler(device_type=self.device.type, enabled=self.use_amp)
+        self.g_scaler = torch.amp.GradScaler(enabled=self.use_amp)
+        self.d_scaler = torch.amp.GradScaler(enabled=self.use_amp)
         
         # 损失权重
         self.lambda_gp = lambda_gp
@@ -85,7 +85,7 @@ class VQGANTrainer:
         # 判别器损失检查 - 如果损失过大，跳过此次更新
         if not torch.isnan(d_loss) and d_loss.item() < 1000:
             if self.use_amp:
-                with torch.amp.autocast(device_type=self.device.type, enabled=True):
+                with torch.amp.autocast(enabled=True):
                     self.d_scaler.scale(d_loss).backward()
                     self.d_scaler.step(self.d_optimizer)
                     self.d_scaler.update()
@@ -137,7 +137,7 @@ class VQGANTrainer:
             # 生成器损失检查
             if not torch.isnan(g_loss) and g_loss.item() < 1000:
                 if self.use_amp:
-                    with torch.amp.autocast(device_type=self.device.type, enabled=True):
+                    with torch.amp.autocast(enabled=True):
                         self.g_scaler.scale(g_loss).backward()
                         self.g_scaler.step(self.g_optimizer)
                         self.g_scaler.update()
