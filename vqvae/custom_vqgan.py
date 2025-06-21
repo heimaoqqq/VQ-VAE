@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
-from diffusers.models.autoencoders.vae import Encoder, Decoder
+from diffusers.models.autoencoders.vae import Decoder
 from .ema_vector_quantizer import EMAVectorQuantizer
+from .models.micro_doppler_encoder import MicroDopplerEncoder
 from dataclasses import dataclass
 from typing import Tuple
 
@@ -23,13 +24,11 @@ class CustomVQGAN(nn.Module):
         if embed_dim != latent_channels:
              raise ValueError(f"Latent channels from encoder ({latent_channels}) must match VQ embedding dimension ({embed_dim}).")
 
-        # Encoder
-        self.encoder = Encoder(
+        # 使用专为微多普勒时频图设计的编码器
+        self.encoder = MicroDopplerEncoder(
             in_channels=in_channels,
-            out_channels=latent_channels,
-            down_block_types=["DownEncoderBlock2D"] * len(block_out_channels),
-            block_out_channels=block_out_channels,
-            layers_per_block=layers_per_block,
+            latent_dim=latent_channels,
+            base_channels=block_out_channels[0]
         )
 
         # Our new, reliable EMA Vector Quantizer

@@ -39,8 +39,8 @@ class VQGANTrainer:
         
         # 码本监控相关
         self.codebook_stats = []
-        self.max_codebook_size = 4096  # 最大码本大小
-        self.expansion_threshold = 0.8  # 降低码本利用率阈值到0.8
+        self.max_codebook_size = 512  # 最大码本大小设置为512
+        self.expansion_threshold = 0.8  # 码本利用率超过此值时扩展
         
         # Initialize LPIPS loss
         self.perceptual_loss = LPIPS(net='vgg').to(self.device).eval()
