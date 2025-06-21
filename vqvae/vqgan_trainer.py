@@ -62,40 +62,57 @@ class VQGANTrainer:
         real_imgs = real_imgs.to(self.device)
         
         # --- Train Discriminator ---
-        self.d_optimizer.zero_grad()
-        
-        # Get reconstructed images
-        with torch.no_grad():
-            decoded_imgs_detached = self.vqgan(real_imgs, return_dict=True)["decoded_imgs"].detach()
-        
-        # Real images loss
-        real_pred = self.discriminator(real_imgs)
-        d_real_loss = -torch.mean(real_pred)
-        
-        # Fake images loss
-        fake_pred = self.discriminator(decoded_imgs_detached)
-        d_fake_loss = torch.mean(fake_pred)
-        
-        # Gradient penalty
-        gp_loss = self._gradient_penalty(real_imgs, decoded_imgs_detached)
-        
-        # Total discriminator loss
-        d_loss = d_real_loss + d_fake_loss + self.lambda_gp * gp_loss
-        
-        # 判别器损失检查 - 如果损失过大，跳过此次更新
-        if not torch.isnan(d_loss) and d_loss.item() < 1000:
-            if self.use_amp:
-                with torch.amp.autocast(device_type='cuda', enabled=True):
-                    self.d_scaler.scale(d_loss).backward()
-                    self.d_scaler.step(self.d_optimizer)
-                    self.d_scaler.update()
+        # 在训练初期减少判别器更新频率，让生成器先学习
+        should_train_disc = True
+        if self.steps < 500:  # 前500步
+            should_train_disc = (self.steps % 5 == 0)  # 每5步更新一次判别器
+        elif self.steps < 1000:  # 500-1000步
+            should_train_disc = (self.steps % 3 == 0)  # 每3步更新一次判别器
+            
+        if should_train_disc:
+            self.d_optimizer.zero_grad()
+            
+            # Get reconstructed images
+            with torch.no_grad():
+                decoded_imgs_detached = self.vqgan(real_imgs, return_dict=True)["decoded_imgs"].detach()
+            
+            # Real images loss
+            real_pred = self.discriminator(real_imgs)
+            d_real_loss = -torch.mean(real_pred)
+            
+            # Fake images loss
+            fake_pred = self.discriminator(decoded_imgs_detached)
+            d_fake_loss = torch.mean(fake_pred)
+            
+            # Gradient penalty
+            gp_loss = self._gradient_penalty(real_imgs, decoded_imgs_detached)
+            
+            # Total discriminator loss
+            d_loss = d_real_loss + d_fake_loss + self.lambda_gp * gp_loss
+            
+            # 判别器损失检查 - 如果损失过大，跳过此次更新
+            # 在训练初期（前100步）使用更宽松的阈值，允许更大的损失值
+            loss_threshold = 10000.0 if self.steps < 100 else 1000.0
+            
+            if not torch.isnan(d_loss) and d_loss.item() < loss_threshold:
+                if self.use_amp:
+                    with torch.amp.autocast(device_type='cuda', enabled=True):
+                        self.d_scaler.scale(d_loss).backward()
+                        self.d_scaler.step(self.d_optimizer)
+                        self.d_scaler.update()
+                else:
+                    d_loss.backward()
+                    # 添加梯度裁剪，防止梯度爆炸
+                    torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), max_norm=1.0)
+                    self.d_optimizer.step()
             else:
-                d_loss.backward()
-                # 添加梯度裁剪，防止梯度爆炸
-                torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), max_norm=1.0)
-                self.d_optimizer.step()
+                print(f"跳过判别器更新，损失值异常: {d_loss.item()}")
+                d_loss = torch.tensor(0.0, device=self.device)
+                d_real_loss = torch.tensor(0.0, device=self.device)
+                d_fake_loss = torch.tensor(0.0, device=self.device)
+                gp_loss = torch.tensor(0.0, device=self.device)
         else:
-            print(f"跳过判别器更新，损失值异常: {d_loss.item()}")
+            # 不训练判别器时，设置默认值
             d_loss = torch.tensor(0.0, device=self.device)
             d_real_loss = torch.tensor(0.0, device=self.device)
             d_fake_loss = torch.tensor(0.0, device=self.device)
@@ -122,6 +139,11 @@ class VQGANTrainer:
             gen_pred = self.discriminator(decoded_imgs)
             adv_loss = -torch.mean(gen_pred)
             
+            # 在训练初期逐渐增加对抗损失权重
+            effective_adv_weight = self.adversarial_weight
+            if self.steps < 1000:
+                effective_adv_weight = self.adversarial_weight * (self.steps / 1000.0)
+            
             # Entropy regularization
             entropy_loss = -vq_output.get("entropy", torch.tensor(0.0, device=self.device))
             
@@ -129,7 +151,7 @@ class VQGANTrainer:
             g_loss = (
                 self.l1_weight * l1_loss + 
                 self.perceptual_weight * p_loss + 
-                self.adversarial_weight * adv_loss +
+                effective_adv_weight * adv_loss +
                 vq_loss +
                 self.entropy_weight * entropy_loss
             )
