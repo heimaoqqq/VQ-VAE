@@ -330,7 +330,8 @@ class VQGANTrainer:
             
             # 验证
             val_metrics, val_samples = self._run_epoch(val_loader, is_train=False, epoch=epoch, num_epochs=epochs)
-            current_val_loss = val_metrics.get('Perceptual', float('inf'))
+            # 使用归一化熵作为验证指标，值越大越好
+            current_val_loss = val_metrics.get('Normalized_Entropy', 0.0)
 
             # 学习率调度
             if self.lr_scheduler_g: self.lr_scheduler_g.step()
@@ -348,14 +349,15 @@ class VQGANTrainer:
                 )
 
             # --- Checkpoint and Early Stopping ---
-            if current_val_loss < self.best_val_loss:
-                print(f"验证损失从 {self.best_val_loss:.4f} 改善到 {current_val_loss:.4f}。保存模型...")
+            # 对于归一化熵，值越大越好
+            if current_val_loss > self.best_val_loss:
+                print(f"归一化熵从 {self.best_val_loss:.4f} 改善到 {current_val_loss:.4f}。保存模型...")
                 self.best_val_loss = current_val_loss
                 self.save_checkpoint(epoch, is_best=True)
                 self.early_stopping_counter = 0
             else:
                 self.early_stopping_counter += 1
-                print(f"验证损失未改善。计数器: {self.early_stopping_counter}/{early_stopping_patience}")
+                print(f"归一化熵未改善。计数器: {self.early_stopping_counter}/{early_stopping_patience}")
             
             if val_samples['originals']:
                 self._save_sample_images(epoch, torch.cat(val_samples['originals']), torch.cat(val_samples['reconstructions']))
