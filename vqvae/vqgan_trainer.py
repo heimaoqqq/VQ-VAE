@@ -177,6 +177,7 @@ class VQGANTrainer:
                 l1_loss = torch.tensor(0.5, device=self.device)
                 p_loss = torch.tensor(0.5, device=self.device)
                 adv_loss = torch.tensor(0.0, device=self.device)
+                entropy = torch.tensor(0.0, device=self.device)
                 
         else:
             # 如果这步不更新生成器，设置默认值
@@ -185,7 +186,7 @@ class VQGANTrainer:
             adv_loss = torch.tensor(0.0, device=self.device)
             g_loss = torch.tensor(0.0, device=self.device)
             perplexity = torch.tensor(0.0, device=self.device)
-            entropy_loss = torch.tensor(0.0, device=self.device)
+            entropy = torch.tensor(0.0, device=self.device)
             
         self.steps += 1
         
@@ -195,7 +196,7 @@ class VQGANTrainer:
             "Perceptual": p_loss.item(),
             "Adv": adv_loss.item(),
             "Commit": vq_loss.item() if hasattr(vq_loss, 'item') else 0.0,
-            "Entropy": entropy_loss.item(),
+            "Entropy": entropy.item(),  # 显示原始熵值，不使用负号
             "Perplexity": perplexity.item() if hasattr(perplexity, 'item') else 0.0,
             "D": d_loss.item()
         }
@@ -523,14 +524,23 @@ class VQGANTrainer:
         return gradient_penalty
     
     def monitor_codebook(self, epoch):
-        """监控码本使用情况并在必要时扩展码本"""
+        """
+        监控码本使用情况，并在必要时扩展码本
+        """
         if not hasattr(self.vqgan.quantize, 'get_codebook_stats'):
             return
             
-        # 获取码本统计信息
+        # 获取码本统计
         stats = self.vqgan.quantize.get_codebook_stats()
-        stats['epoch'] = epoch
-        self.codebook_stats.append(stats)
+        
+        # 保存统计信息
+        self.codebook_stats.append({
+            'epoch': epoch,
+            'active_size': stats['active_size'],
+            'utilization': stats['utilization'],
+            'entropy': stats['entropy'],
+            'normalized_entropy': stats['normalized_entropy']
+        })
         
         # 打印码本使用情况
         print(f"\nCodebook Stats [Epoch {epoch}]:")
@@ -552,7 +562,14 @@ class VQGANTrainer:
                     # 更新优化器以包含新的码本参数
                     self._update_optimizers_after_expansion()
                     print(f"Codebook successfully expanded to {new_size}")
-    
+        
+        # 如果验证损失改善，保存模型
+        if epoch > 1 and self.codebook_stats[-2]['normalized_entropy'] > stats['normalized_entropy']:
+            print(f"验证损失从 {self.codebook_stats[-2]['normalized_entropy']:.4f} 改善到 {stats['normalized_entropy']:.4f}。保存模型...")
+            self.save_checkpoint(epoch, is_best=True)
+        else:
+            print(f"验证损失从 inf 改善到 {stats['normalized_entropy']:.4f}。保存模型...")
+
     def _update_optimizers_after_expansion(self):
         """在码本扩展后更新优化器"""
         # 重新创建生成器优化器，包含新的码本参数
