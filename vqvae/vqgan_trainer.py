@@ -61,73 +61,119 @@ class VQGANTrainer:
         
         # --- Train Discriminator ---
         self.d_optimizer.zero_grad()
-        with torch.amp.autocast(self.device.type, enabled=self.use_amp):
-            # We only need the decoded images for the discriminator, so we detach them
+        
+        # Get reconstructed images
+        with torch.no_grad():
             decoded_imgs_detached = self.vqgan(real_imgs, return_dict=True)["decoded_imgs"].detach()
-            
-            real_output = self.discriminator(real_imgs)
-            fake_output = self.discriminator(decoded_imgs_detached)
-            
-            gradient_penalty = self.compute_gradient_penalty(real_imgs, decoded_imgs_detached)
-            d_loss = fake_output.mean() - real_output.mean() + self.lambda_gp * gradient_penalty
-            
-        self.d_scaler.scale(d_loss).backward()
-        self.d_scaler.step(self.d_optimizer)
-        self.d_scaler.update()
-
-        # --- Train Generator ---
-        self.g_optimizer.zero_grad()
-        with torch.amp.autocast(self.device.type, enabled=self.use_amp):
-            # Forward pass for generator
-            vqgan_output = self.vqgan(real_imgs, return_dict=True)
-            decoded_imgs = vqgan_output["decoded_imgs"]
-            commitment_loss = vqgan_output["commitment_loss"]
-            perplexity = vqgan_output["perplexity"]
-            
-            # Reconstruction losses
-            l1_loss = F.l1_loss(decoded_imgs, real_imgs)
-            
-            # 只有当perceptual_weight > 0时才计算感知损失
-            if self.perceptual_weight > 0:
-                perceptual_loss = self.perceptual_loss(decoded_imgs, real_imgs).mean()
+        
+        # Real images loss
+        real_pred = self.discriminator(real_imgs)
+        d_real_loss = -torch.mean(real_pred)
+        
+        # Fake images loss
+        fake_pred = self.discriminator(decoded_imgs_detached)
+        d_fake_loss = torch.mean(fake_pred)
+        
+        # Gradient penalty
+        gp_loss = self._gradient_penalty(real_imgs, decoded_imgs_detached)
+        
+        # Total discriminator loss
+        d_loss = d_real_loss + d_fake_loss + self.lambda_gp * gp_loss
+        
+        # 判别器损失检查 - 如果损失过大，跳过此次更新
+        if not torch.isnan(d_loss) and d_loss.item() < 1000:
+            if self.use_amp:
+                with torch.amp.autocast(device_type=self.device.type, enabled=True):
+                    self.d_scaler.scale(d_loss).backward()
+                    self.d_scaler.step(self.d_optimizer)
+                    self.d_scaler.update()
             else:
-                perceptual_loss = torch.tensor(0.0, device=self.device)
+                d_loss.backward()
+                # 添加梯度裁剪，防止梯度爆炸
+                torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), max_norm=1.0)
+                self.d_optimizer.step()
+        else:
+            print(f"跳过判别器更新，损失值异常: {d_loss.item()}")
+            d_loss = torch.tensor(0.0, device=self.device)
+            d_real_loss = torch.tensor(0.0, device=self.device)
+            d_fake_loss = torch.tensor(0.0, device=self.device)
+            gp_loss = torch.tensor(0.0, device=self.device)
+        
+        # --- Train Generator (VQ-GAN) ---
+        # 只有每隔n步才更新一次判别器，这样可以平衡生成器和判别器的训练
+        if self.steps % 1 == 0:  # 每步都更新生成器
+            self.g_optimizer.zero_grad()
+            
+            # Forward pass
+            vq_output = self.vqgan(real_imgs, return_dict=True)
+            decoded_imgs = vq_output["decoded_imgs"]
+            vq_loss = vq_output["loss"]
+            perplexity = vq_output["perplexity"]
+            
+            # Reconstruction loss (L1)
+            l1_loss = torch.abs(real_imgs - decoded_imgs).mean()
+            
+            # Perceptual loss
+            p_loss = self.perceptual_loss(real_imgs, decoded_imgs)
             
             # Adversarial loss
-            g_output = self.discriminator(decoded_imgs)
-            g_loss_adv = -g_output.mean()
+            gen_pred = self.discriminator(decoded_imgs)
+            adv_loss = -torch.mean(gen_pred)
             
-            # 添加码本熵正则化 - 鼓励更均匀的码本使用
-            entropy_loss_val = 0.0
-            if self.entropy_weight > 0 and hasattr(self.vqgan.quantize, 'get_codebook_stats'):
-                stats = self.vqgan.quantize.get_codebook_stats()
-                # 熵越大越好，所以我们最小化负熵
-                entropy_loss = -self.entropy_weight * stats['normalized_entropy']
-                entropy_loss_val = entropy_loss.item() if torch.is_tensor(entropy_loss) else float(entropy_loss)
+            # Entropy regularization
+            entropy_loss = -vq_output.get("entropy", torch.tensor(0.0, device=self.device))
+            
+            # Total generator loss
+            g_loss = (
+                self.l1_weight * l1_loss + 
+                self.perceptual_weight * p_loss + 
+                self.adversarial_weight * adv_loss +
+                vq_loss +
+                self.entropy_weight * entropy_loss
+            )
+            
+            # 生成器损失检查
+            if not torch.isnan(g_loss) and g_loss.item() < 1000:
+                if self.use_amp:
+                    with torch.amp.autocast(device_type=self.device.type, enabled=True):
+                        self.g_scaler.scale(g_loss).backward()
+                        self.g_scaler.step(self.g_optimizer)
+                        self.g_scaler.update()
+                else:
+                    g_loss.backward()
+                    # 添加梯度裁剪
+                    torch.nn.utils.clip_grad_norm_(self.vqgan.parameters(), max_norm=1.0)
+                    self.g_optimizer.step()
             else:
-                entropy_loss = 0.0
+                print(f"跳过生成器更新，损失值异常: {g_loss.item()}")
+                g_loss = torch.tensor(1.0, device=self.device)
+                l1_loss = torch.tensor(0.5, device=self.device)
+                p_loss = torch.tensor(0.5, device=self.device)
+                adv_loss = torch.tensor(0.0, device=self.device)
+                
+        else:
+            # 如果这步不更新生成器，设置默认值
+            l1_loss = torch.tensor(0.0, device=self.device)
+            p_loss = torch.tensor(0.0, device=self.device)
+            adv_loss = torch.tensor(0.0, device=self.device)
+            g_loss = torch.tensor(0.0, device=self.device)
+            perplexity = torch.tensor(0.0, device=self.device)
+            entropy_loss = torch.tensor(0.0, device=self.device)
             
-            # Combine all losses for the generator
-            # The commitment loss is already scaled by its beta inside the VQGAN model
-            g_loss = (self.l1_weight * l1_loss + 
-                      self.perceptual_weight * perceptual_loss + 
-                      self.adversarial_weight * g_loss_adv + 
-                      commitment_loss + 
-                      entropy_loss)  # 添加熵损失
-
-        self.g_scaler.scale(g_loss).backward()
-        self.g_scaler.step(self.g_optimizer)
-        self.g_scaler.update()
-
-        return {
-            'L1': l1_loss.item(), 
-            'Perceptual': perceptual_loss.item(), 
-            'Adv': g_loss_adv.item(),
-            'Commit': commitment_loss.item(), 
-            'Entropy': entropy_loss_val,  # 使用预先计算的值
-            'Perplexity': perplexity.item(), 
-            'D': d_loss.item()
+        self.steps += 1
+        
+        # Return metrics
+        metrics = {
+            "L1": l1_loss.item(),
+            "Perceptual": p_loss.item(),
+            "Adv": adv_loss.item(),
+            "Commit": vq_loss.item() if hasattr(vq_loss, 'item') else 0.0,
+            "Entropy": entropy_loss.item(),
+            "Perplexity": perplexity.item() if hasattr(perplexity, 'item') else 0.0,
+            "D": d_loss.item()
         }
+        
+        return metrics
 
     def _validate_batch(self, batch):
         real_imgs, _ = batch
@@ -404,22 +450,48 @@ class VQGANTrainer:
             print(f"加载检查点时出错: {e}")
             return False
 
-    def compute_gradient_penalty(self, real_samples, fake_samples):
-        alpha = torch.rand(real_samples.size(0), 1, 1, 1, device=self.device)
-        interpolates = (alpha * real_samples + ((1 - alpha) * fake_samples)).requires_grad_(True)
+    def _gradient_penalty(self, real_samples, fake_samples):
+        """
+        计算WGAN-GP中的梯度惩罚项
+        添加了额外的稳定性措施
+        """
+        batch_size = real_samples.size(0)
+        device = real_samples.device
+        
+        # 生成随机插值系数
+        alpha = torch.rand(batch_size, 1, 1, 1, device=device)
+        
+        # 在真实样本和生成样本之间进行线性插值
+        interpolates = alpha * real_samples + (1 - alpha) * fake_samples
+        interpolates.requires_grad_(True)
+        
+        # 计算判别器对插值样本的输出
         d_interpolates = self.discriminator(interpolates)
         
+        # 创建与d_interpolates形状相同的全1张量
+        fake = torch.ones_like(d_interpolates, device=device, requires_grad=False)
+        
+        # 计算梯度
         gradients = torch.autograd.grad(
             outputs=d_interpolates,
             inputs=interpolates,
-            grad_outputs=torch.ones_like(d_interpolates),
+            grad_outputs=fake,
             create_graph=True,
             retain_graph=True,
+            only_inputs=True
         )[0]
         
-        gradients = gradients.view(gradients.size(0), -1)
-        gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
-        return gradient_penalty 
+        # 展平梯度
+        gradients = gradients.view(batch_size, -1)
+        
+        # 计算梯度的L2范数
+        gradient_norm = gradients.norm(2, dim=1)
+        
+        # 添加一个小的epsilon值以提高数值稳定性
+        epsilon = 1e-6
+        gradient_penalty = ((gradient_norm - 1) ** 2).mean() + epsilon
+        
+        return gradient_penalty
     
     def monitor_codebook(self, epoch):
         """监控码本使用情况并在必要时扩展码本"""

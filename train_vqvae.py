@@ -134,7 +134,7 @@ if __name__ == '__main__':
     parser.add_argument('--image_size', type=int, default=256, help='Size to resize images to')
     parser.add_argument('--batch_size', type=int, default=16, help='Batch size for training')
     parser.add_argument('--lr', type=float, default=2e-4, help='Learning rate for generator')
-    parser.add_argument('--lr_d', type=float, default=2.5e-4, help='Learning rate for discriminator')
+    parser.add_argument('--lr_d', type=float, default=5e-5, help='Learning rate for discriminator (从2.5e-4降低到5e-5，提高稳定性)')
     parser.add_argument('--beta1', type=float, default=0.5, help='Adam beta1')
     parser.add_argument('--beta2', type=float, default=0.9, help='Adam beta2')
     parser.add_argument('--epochs', type=int, default=300, help='Number of training epochs')
@@ -156,8 +156,8 @@ if __name__ == '__main__':
     # Loss weights
     parser.add_argument('--l1_weight', type=float, default=0.6, help='Weight for L1 reconstruction loss')
     parser.add_argument('--perceptual_weight', type=float, default=0.005, help='Weight for perceptual loss (从0.01降低为0.005)')
-    parser.add_argument('--adversarial_weight', type=float, default=0.8, help='Weight for adversarial loss')
-    parser.add_argument('--gp_weight', type=float, default=10.0, help='Weight for gradient penalty in WGAN-GP')
+    parser.add_argument('--adversarial_weight', type=float, default=0.3, help='Weight for adversarial loss (从0.8降低到0.3)')
+    parser.add_argument('--gp_weight', type=float, default=5.0, help='Weight for gradient penalty in WGAN-GP (从10.0降低到5.0)')
     parser.add_argument('--entropy_weight', type=float, default=0.6, help='Weight for codebook entropy regularization (从0.1增加到0.6)')
             
     # Dataset params
