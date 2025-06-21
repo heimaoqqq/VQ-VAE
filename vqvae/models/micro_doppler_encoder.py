@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import torch.nn.functional as torch_func  # 重命名为torch_func避免冲突
 
 class FrequencyAttention(nn.Module):
     """
@@ -24,7 +24,7 @@ class FrequencyAttention(nn.Module):
         proj_query = self.query(x).view(batch_size, -1, T * F).permute(0, 2, 1)  # [B, T*F, C//8]
         proj_key = self.key(x).view(batch_size, -1, T * F)  # [B, C//8, T*F]
         energy = torch.bmm(proj_query, proj_key)  # [B, T*F, T*F]
-        attention = F.softmax(energy, dim=-1)
+        attention = torch_func.softmax(energy, dim=-1)  # 使用torch_func替代F
         
         proj_value = self.value(x).view(batch_size, -1, T * F)  # [B, C, T*F]
         out = torch.bmm(proj_value, attention.permute(0, 2, 1))
