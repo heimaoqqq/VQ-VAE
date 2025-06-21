@@ -85,7 +85,7 @@ class VQGANTrainer:
         # 判别器损失检查 - 如果损失过大，跳过此次更新
         if not torch.isnan(d_loss) and d_loss.item() < 1000:
             if self.use_amp:
-                with torch.amp.autocast(enabled=True):
+                with torch.amp.autocast(device_type='cuda', enabled=True):
                     self.d_scaler.scale(d_loss).backward()
                     self.d_scaler.step(self.d_optimizer)
                     self.d_scaler.update()
@@ -137,7 +137,7 @@ class VQGANTrainer:
             # 生成器损失检查
             if not torch.isnan(g_loss) and g_loss.item() < 1000:
                 if self.use_amp:
-                    with torch.amp.autocast(enabled=True):
+                    with torch.amp.autocast(device_type='cuda', enabled=True):
                         self.g_scaler.scale(g_loss).backward()
                         self.g_scaler.step(self.g_optimizer)
                         self.g_scaler.update()
@@ -181,7 +181,7 @@ class VQGANTrainer:
         real_imgs, _ = batch
         real_imgs = real_imgs.to(self.device)
         with torch.no_grad():
-            with torch.amp.autocast(self.device.type, enabled=self.use_amp):
+            with torch.amp.autocast(device_type='cuda', enabled=self.use_amp):
                 vqgan_output = self.vqgan(real_imgs, return_dict=True)
                 decoded_imgs = vqgan_output["decoded_imgs"]
                 commitment_loss = vqgan_output["commitment_loss"]
