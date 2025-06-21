@@ -98,12 +98,19 @@ class CustomVQGAN(nn.Module):
             # This tuple format is for simple inference, not training
             return (reconstructed_x, commitment_loss, perplexity)
 
+        # 获取码本统计信息，包括熵
+        codebook_stats = self.quantize.get_codebook_stats()
+        entropy = torch.tensor(codebook_stats["entropy"], device=x.device)
+        normalized_entropy = torch.tensor(codebook_stats["normalized_entropy"], device=x.device)
+        
         # The dictionary format is more descriptive and is what the trainer will now use
         return {
             "decoded_imgs": reconstructed_x,
             "commitment_loss": commitment_loss,
             "indices": indices,
             "perplexity": perplexity,
+            "entropy": entropy,
+            "normalized_entropy": normalized_entropy
         }
 
 @dataclass

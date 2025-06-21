@@ -129,6 +129,9 @@ class VQGANTrainer:
             vq_loss = vq_output["commitment_loss"]
             perplexity = vq_output["perplexity"]
             
+            # 获取熵值，如果没有则使用默认值0
+            entropy = vq_output.get("entropy", torch.tensor(0.0, device=self.device))
+            
             # Reconstruction loss (L1)
             l1_loss = torch.abs(real_imgs - decoded_imgs).mean()
             
@@ -144,8 +147,8 @@ class VQGANTrainer:
             if self.steps < 1000:
                 effective_adv_weight = self.adversarial_weight * (self.steps / 1000.0)
             
-            # Entropy regularization
-            entropy_loss = -vq_output.get("entropy", torch.tensor(0.0, device=self.device))
+            # Entropy regularization - 使用从模型获取的熵值
+            entropy_loss = -entropy  # 最大化熵，所以使用负号
             
             # Total generator loss
             g_loss = (
@@ -208,6 +211,7 @@ class VQGANTrainer:
                 decoded_imgs = vqgan_output["decoded_imgs"]
                 commitment_loss = vqgan_output["commitment_loss"]
                 perplexity = vqgan_output["perplexity"]
+                entropy = vqgan_output.get("entropy", torch.tensor(0.0, device=self.device))
                 
                 l1_loss = F.l1_loss(decoded_imgs, real_imgs)
                 
@@ -222,6 +226,7 @@ class VQGANTrainer:
             'Perceptual': perceptual_loss.item(),
             'Commit': commitment_loss.item(), 
             'Perplexity': perplexity.item(),
+            'Entropy': entropy.item(),
             'originals': real_imgs, 
             'reconstructions': decoded_imgs  # 移除clamp操作，保持原始范围
         }
