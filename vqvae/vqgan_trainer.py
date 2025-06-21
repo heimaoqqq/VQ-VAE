@@ -131,6 +131,7 @@ class VQGANTrainer:
             
             # 获取熵值，如果没有则使用默认值0
             entropy = vq_output.get("entropy", torch.tensor(0.0, device=self.device))
+            normalized_entropy = vq_output.get("normalized_entropy", torch.tensor(0.0, device=self.device))
             
             # Reconstruction loss (L1)
             l1_loss = torch.abs(real_imgs - decoded_imgs).mean()
@@ -178,6 +179,7 @@ class VQGANTrainer:
                 p_loss = torch.tensor(0.5, device=self.device)
                 adv_loss = torch.tensor(0.0, device=self.device)
                 entropy = torch.tensor(0.0, device=self.device)
+                normalized_entropy = torch.tensor(0.0, device=self.device)
                 
         else:
             # 如果这步不更新生成器，设置默认值
@@ -187,6 +189,7 @@ class VQGANTrainer:
             g_loss = torch.tensor(0.0, device=self.device)
             perplexity = torch.tensor(0.0, device=self.device)
             entropy = torch.tensor(0.0, device=self.device)
+            normalized_entropy = torch.tensor(0.0, device=self.device)
             
         self.steps += 1
         
@@ -196,7 +199,8 @@ class VQGANTrainer:
             "Perceptual": p_loss.item(),
             "Adv": adv_loss.item(),
             "Commit": vq_loss.item() if hasattr(vq_loss, 'item') else 0.0,
-            "Entropy": entropy.item(),  # 显示原始熵值，不使用负号
+            "Entropy": entropy.item(),  # 显示原始熵值
+            "Normalized_Entropy": normalized_entropy.item(),  # 添加归一化熵值显示
             "Perplexity": perplexity.item() if hasattr(perplexity, 'item') else 0.0,
             "D": d_loss.item()
         }
@@ -213,6 +217,7 @@ class VQGANTrainer:
                 commitment_loss = vqgan_output["commitment_loss"]
                 perplexity = vqgan_output["perplexity"]
                 entropy = vqgan_output.get("entropy", torch.tensor(0.0, device=self.device))
+                normalized_entropy = vqgan_output.get("normalized_entropy", torch.tensor(0.0, device=self.device))
                 
                 l1_loss = F.l1_loss(decoded_imgs, real_imgs)
                 
@@ -228,6 +233,7 @@ class VQGANTrainer:
             'Commit': commitment_loss.item(), 
             'Perplexity': perplexity.item(),
             'Entropy': entropy.item(),
+            'Normalized_Entropy': normalized_entropy.item(),
             'originals': real_imgs, 
             'reconstructions': decoded_imgs  # 移除clamp操作，保持原始范围
         }
@@ -524,51 +530,56 @@ class VQGANTrainer:
         return gradient_penalty
     
     def monitor_codebook(self, epoch):
-        """
-        监控码本使用情况，并在必要时扩展码本
-        """
-        if not hasattr(self.vqgan.quantize, 'get_codebook_stats'):
-            return
-            
-        # 获取码本统计
+        """监控码本使用情况，并在需要时重置未使用的码元"""
+        # 获取码本统计信息
         stats = self.vqgan.quantize.get_codebook_stats()
         
-        # 保存统计信息
-        self.codebook_stats.append({
-            'epoch': epoch,
-            'active_size': stats['active_size'],
-            'utilization': stats['utilization'],
-            'entropy': stats['entropy'],
-            'normalized_entropy': stats['normalized_entropy']
-        })
+        # 记录统计信息
+        if not hasattr(self, 'codebook_stats'):
+            self.codebook_stats = []
+        
+        self.codebook_stats.append(stats)
         
         # 打印码本使用情况
-        print(f"\nCodebook Stats [Epoch {epoch}]:")
-        print(f"- Active codes: {stats['active_size']}/{self.vqgan.quantize.num_embeddings} ({stats['utilization']:.4f})")
-        print(f"- Codebook entropy: {stats['entropy']:.4f} (normalized: {stats['normalized_entropy']:.4f})")
+        print(f"\n=== 码本统计 (Epoch {epoch}) ===")
+        print(f"活跃码元: {stats['active_size']}/{self.vqgan.quantize.num_embeddings} ({stats['utilization']*100:.1f}%)")
+        print(f"熵值: {stats['entropy']:.4f}")
+        print(f"归一化熵: {stats['normalized_entropy']:.4f}")
+        print(f"总使用次数: {stats['total_usage']:.0f}")
         
-        # 检查是否需要扩展码本
-        current_size = self.vqgan.quantize.num_embeddings
-        if stats['utilization'] > self.expansion_threshold and current_size < self.max_codebook_size:
-            # 计算新的码本大小 (增加一倍，但不超过最大值)
-            new_size = min(current_size * 2, self.max_codebook_size)
+        # 如果码本利用率高于阈值，考虑扩展码本
+        if stats['utilization'] > self.expansion_threshold and self.vqgan.quantize.num_embeddings < self.max_codebook_size:
+            # 计算新的码本大小，每次增加25%
+            new_size = min(
+                int(self.vqgan.quantize.num_embeddings * 1.25),
+                self.max_codebook_size
+            )
             
-            # 扩展码本
-            if hasattr(self.vqgan.quantize, 'expand_codebook'):
-                print(f"Expanding codebook from {current_size} to {new_size}...")
-                success = self.vqgan.quantize.expand_codebook(new_size)
+            # 只有当新大小大于当前大小时才扩展
+            if new_size > self.vqgan.quantize.num_embeddings:
+                print(f"码本利用率高 ({stats['utilization']*100:.1f}%)，扩展码本从 {self.vqgan.quantize.num_embeddings} 到 {new_size}")
                 
-                if success:
-                    # 更新优化器以包含新的码本参数
+                # 扩展码本
+                if self.vqgan.quantize.expand_codebook(new_size):
+                    # 更新优化器以包含新参数
                     self._update_optimizers_after_expansion()
-                    print(f"Codebook successfully expanded to {new_size}")
+        
+        # 重置低使用率码元
+        if epoch > 0:
+            reset_count = self.vqgan.quantize.reset_low_usage_codes(
+                percentage=self.reset_low_usage_percentage,
+                current_epoch=epoch
+            )
+            if reset_count > 0:
+                print(f"重置了 {reset_count} 个低使用率码元")
         
         # 如果验证损失改善，保存模型
-        if epoch > 1 and self.codebook_stats[-2]['normalized_entropy'] > stats['normalized_entropy']:
+        if len(self.codebook_stats) > 1 and self.codebook_stats[-2]['normalized_entropy'] > stats['normalized_entropy']:
             print(f"验证损失从 {self.codebook_stats[-2]['normalized_entropy']:.4f} 改善到 {stats['normalized_entropy']:.4f}。保存模型...")
             self.save_checkpoint(epoch, is_best=True)
-        else:
-            print(f"验证损失从 inf 改善到 {stats['normalized_entropy']:.4f}。保存模型...")
+        elif len(self.codebook_stats) == 1:
+            print(f"首次评估，归一化熵: {stats['normalized_entropy']:.4f}。保存模型...")
+            self.save_checkpoint(epoch, is_best=True)
 
     def _update_optimizers_after_expansion(self):
         """在码本扩展后更新优化器"""
