@@ -341,8 +341,10 @@ class VQGANTrainer:
             if self.lr_scheduler_d: self.lr_scheduler_d.step()
 
             # --- 码本监控和扩展 ---
-            # 每个epoch都检查码本使用情况
-            self.monitor_codebook(epoch)
+            # 每个epoch都检查码本使用情况，并获取当前归一化熵值
+            normalized_entropy = self.monitor_codebook(epoch)
+            # 使用从monitor_codebook返回的归一化熵值，确保一致性
+            current_val_loss = normalized_entropy
             
             # 重置使用频率最低的码元
             if hasattr(self.vqgan.quantize, 'reset_low_usage_codes') and epoch % self.reset_low_usage_interval == 0:
@@ -606,13 +608,8 @@ class VQGANTrainer:
             if reset_count > 0:
                 print(f"重置了 {reset_count} 个低使用率码元")
         
-        # 如果验证损失改善（归一化熵值增加表示码本使用更均衡），保存模型
-        if len(self.codebook_stats) > 1 and self.codebook_stats[-2]['normalized_entropy'] < stats['normalized_entropy']:
-            print(f"归一化熵从 {self.codebook_stats[-2]['normalized_entropy']:.4f} 改善到 {stats['normalized_entropy']:.4f}。保存模型...")
-            self.save_checkpoint(epoch, is_best=True)
-        elif len(self.codebook_stats) == 1:
-            print(f"首次评估，归一化熵: {stats['normalized_entropy']:.4f}。保存模型...")
-            self.save_checkpoint(epoch, is_best=True)
+        # 返回当前的归一化熵值，供train方法使用
+        return stats['normalized_entropy']
 
     def _update_optimizers_after_expansion(self):
         """在码本扩展后更新优化器"""
