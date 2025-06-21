@@ -12,6 +12,9 @@ from vqvae.custom_vqgan import CustomVQGAN
 from vqvae.discriminator import Discriminator
 from vqvae.vqgan_trainer import VQGANTrainer
 from dataset import MicroDopplerDataset
+from vqvae.models.micro_doppler_encoder import MicroDopplerEncoder
+from vqvae.models.micro_doppler_decoder import MicroDopplerDecoder
+from diffusers.models.autoencoders.vae import Encoder, Decoder
 
 def main(config):
     # Setup device and AMP
@@ -39,6 +42,23 @@ def main(config):
         commitment_loss_beta=config.commitment_loss_beta,
         ema_decay=config.ema_decay
     ).to(device)
+    
+    # 根据命令行参数选择使用自定义编码器/解码器
+    if config.use_micro_doppler_encoder:
+        print("使用微多普勒专用编码器")
+        model.encoder = MicroDopplerEncoder(
+            in_channels=3,
+            latent_dim=config.vq_embed_dim,
+            base_channels=64
+        ).to(device)
+    
+    if config.use_micro_doppler_decoder:
+        print("使用微多普勒专用解码器")
+        model.decoder = MicroDopplerDecoder(
+            in_channels=config.vq_embed_dim,
+            out_channels=3,
+            base_channels=64
+        ).to(device)
     
     # Create Discriminator
     discriminator = Discriminator(input_channels=3, n_layers=3, n_filters_start=config.disc_channels).to(device)
@@ -86,7 +106,9 @@ def main(config):
         perceptual_weight=config.perceptual_weight,
         adversarial_weight=config.adversarial_weight,
         entropy_weight=config.entropy_weight,
-        log_interval=config.log_interval
+        log_interval=config.log_interval,
+        reset_low_usage_interval=config.reset_low_usage_interval,
+        reset_low_usage_percentage=config.reset_low_usage_percentage
     )
 
     # Start training
@@ -125,14 +147,18 @@ if __name__ == '__main__':
     parser.add_argument('--vq_num_embed', type=int, default=512, help='Number of codebook embeddings (默认值从8192降低为512)')
     parser.add_argument('--disc_channels', type=int, default=64, help='Initial channels for discriminator')
     parser.add_argument('--commitment_loss_beta', type=float, default=3.0, help='Commitment loss beta factor (从2.0增加到3.0)')
-    parser.add_argument('--ema_decay', type=float, default=0.999, help='EMA decay rate for codebook updates (从0.995增加到0.999)')
+    parser.add_argument('--ema_decay', type=float, default=0.95, help='EMA decay rate for codebook updates (从0.999降低为0.95)')
+    parser.add_argument('--reset_low_usage_interval', type=int, default=5, help='每多少个epoch重置低使用率码元')
+    parser.add_argument('--reset_low_usage_percentage', type=float, default=0.1, help='重置使用率最低的码元比例')
+    parser.add_argument('--use_micro_doppler_encoder', action='store_true', help='使用微多普勒专用编码器')
+    parser.add_argument('--use_micro_doppler_decoder', action='store_true', help='使用微多普勒专用解码器')
         
     # Loss weights
     parser.add_argument('--l1_weight', type=float, default=0.6, help='Weight for L1 reconstruction loss')
     parser.add_argument('--perceptual_weight', type=float, default=0.005, help='Weight for perceptual loss (从0.01降低为0.005)')
     parser.add_argument('--adversarial_weight', type=float, default=0.8, help='Weight for adversarial loss')
     parser.add_argument('--gp_weight', type=float, default=10.0, help='Weight for gradient penalty in WGAN-GP')
-    parser.add_argument('--entropy_weight', type=float, default=0.1, help='Weight for codebook entropy regularization')
+    parser.add_argument('--entropy_weight', type=float, default=0.6, help='Weight for codebook entropy regularization (从0.1增加到0.6)')
             
     # Dataset params
     parser.add_argument('--val_split_ratio', type=float, default=0.05, help='Ratio of dataset to be used for validation')

@@ -10,7 +10,7 @@ from torchvision.utils import save_image
 import numpy as np
 
 class VQGANTrainer:
-    def __init__(self, vqgan, discriminator, g_optimizer, d_optimizer, lr_scheduler_g, lr_scheduler_d, device, use_amp, checkpoint_path, sample_dir, lambda_gp=10.0, l1_weight=1.0, perceptual_weight=0.005, adversarial_weight=0.8, entropy_weight=0.3, log_interval=50):
+    def __init__(self, vqgan, discriminator, g_optimizer, d_optimizer, lr_scheduler_g, lr_scheduler_d, device, use_amp, checkpoint_path, sample_dir, lambda_gp=10.0, l1_weight=1.0, perceptual_weight=0.005, adversarial_weight=0.8, entropy_weight=0.3, log_interval=50, reset_low_usage_interval=5, reset_low_usage_percentage=0.1):
         self.vqgan = vqgan
         self.discriminator = discriminator
         self.g_optimizer = g_optimizer
@@ -50,6 +50,10 @@ class VQGANTrainer:
         # AMP Scalers (using the new torch.amp API)
         self.g_scaler = torch.amp.GradScaler(self.device.type, enabled=self.use_amp)
         self.d_scaler = torch.amp.GradScaler(self.device.type, enabled=self.use_amp)
+
+        # 低使用率码元重置参数
+        self.reset_low_usage_interval = reset_low_usage_interval
+        self.reset_low_usage_percentage = reset_low_usage_percentage
 
     def _train_batch(self, batch):
         real_imgs, _ = batch
@@ -191,35 +195,26 @@ class VQGANTrainer:
         
         return avg_metrics, all_samples
 
-    def train(self, train_loader, val_loader, epochs, early_stopping_patience=0, 
-             smoke_test=False, skip_optimizer=False, resume_training=True):
+    def train(self, train_loader, val_loader, epochs, early_stopping_patience=0, skip_optimizer=False, resume_training=True):
         """
-        训练模型
+        Train the VQ-GAN model.
         
-        参数:
-            train_loader: 训练数据加载器
-            val_loader: 验证数据加载器
-            epochs: 总训练轮次
-            early_stopping_patience: 早停耐心值，0表示禁用早停
-            smoke_test: 是否进行冒烟测试（只训练1轮）
-            skip_optimizer: 是否跳过加载优化器状态
-            resume_training: 是否从检查点恢复训练，False表示从头开始
+        Args:
+            train_loader: DataLoader for training data
+            val_loader: DataLoader for validation data
+            epochs: Number of epochs to train
+            early_stopping_patience: Patience for early stopping. Set to 0 to disable.
+            skip_optimizer: Whether to skip loading optimizer state
+            resume_training: Whether to resume training from checkpoint
         """
-        if resume_training:
-            load_success = self.load_checkpoint(skip_optimizer=skip_optimizer)
-            if not load_success:
-                print("检查点加载失败，将从头开始训练")
-                self.start_epoch = 1
-                self.best_val_loss = float('inf')
+        # Load checkpoint if exists and resume_training is True
+        if os.path.exists(self.checkpoint_path) and resume_training:
+            self.load_checkpoint(skip_optimizer)
         else:
-            print("从头开始训练，忽略现有检查点")
+            print("从头开始训练，或检查点不存在")
             self.start_epoch = 1
             self.best_val_loss = float('inf')
         
-        if smoke_test:
-            epochs = 1
-            print("--- 冒烟测试模式：只训练1轮 ---")
-
         # 打印训练配置
         print("\n=== 训练配置 ===")
         print(f"批次大小: {train_loader.batch_size}")
@@ -229,14 +224,19 @@ class VQGANTrainer:
         print(f"感知损失权重: {self.perceptual_weight}")
         print(f"对抗损失权重: {self.adversarial_weight}")
         print(f"承诺损失系数: {self.vqgan.config['commitment_loss_beta']}")
-        if hasattr(self, 'entropy_weight'):
-            print(f"熵正则化权重: {self.entropy_weight}")
+        print(f"熵正则化权重: {self.entropy_weight}")
         print(f"EMA衰减率: {self.vqgan.config['ema_decay']}")
+        print(f"低使用率码元重置间隔: {self.reset_low_usage_interval}")
+        print(f"低使用率码元重置比例: {self.reset_low_usage_percentage}")
         print(f"起始轮次: {self.start_epoch}")
         print(f"总训练轮次: {epochs}")
         print(f"早停耐心值: {early_stopping_patience}")
         print("================\n")
-
+        
+        # Early stopping setup
+        patience_counter = 0
+        
+        # Main training loop
         for epoch in range(self.start_epoch, epochs + 1):
             # 检查并重置未使用的码元
             if hasattr(self.vqgan.quantize, 'reset_dead_codes'):
@@ -258,8 +258,11 @@ class VQGANTrainer:
             self.monitor_codebook(epoch)
             
             # 重置使用频率最低的码元
-            if hasattr(self.vqgan.quantize, 'reset_low_usage_codes'):
-                self.vqgan.quantize.reset_low_usage_codes(percentage=0.1, current_epoch=epoch)
+            if hasattr(self.vqgan.quantize, 'reset_low_usage_codes') and epoch % self.reset_low_usage_interval == 0:
+                self.vqgan.quantize.reset_low_usage_codes(
+                    percentage=self.reset_low_usage_percentage, 
+                    current_epoch=epoch
+                )
 
             # --- Checkpoint and Early Stopping ---
             if current_val_loss < self.best_val_loss:
@@ -329,7 +332,7 @@ class VQGANTrainer:
         save_path = os.path.join(self.sample_dir, f'reconstruction_epoch_{epoch:04d}.png')
         save_image(comparison, save_path, nrow=num_samples, normalize=False)
 
-    def load_checkpoint(self, skip_optimizer=False):
+    def _load_checkpoint(self, skip_optimizer=False):
         """
         加载检查点
         
