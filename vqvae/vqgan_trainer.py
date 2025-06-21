@@ -1,13 +1,16 @@
 """
 全新的、重构后的 VQ-GAN 训练器
 """
-import torch
-import torch.nn.functional as F
 import os
-from tqdm import tqdm
-from lpips import LPIPS
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
 from torchvision.utils import save_image
 import numpy as np
+from tqdm import tqdm
+import matplotlib.pyplot as plt
+from .models.losses import PerceptualLoss
 
 class VQGANTrainer:
     def __init__(self, vqgan, discriminator, g_optimizer, d_optimizer, lr_scheduler_g, lr_scheduler_d, device, use_amp, checkpoint_path, sample_dir, lambda_gp=10.0, l1_weight=1.0, perceptual_weight=0.005, adversarial_weight=0.8, entropy_weight=0.3, log_interval=50, reset_low_usage_interval=5, reset_low_usage_percentage=0.1):
@@ -15,45 +18,44 @@ class VQGANTrainer:
         self.discriminator = discriminator
         self.g_optimizer = g_optimizer
         self.d_optimizer = d_optimizer
+        self.device = device
+        self.checkpoint_path = checkpoint_path
+        self.sample_dir = sample_dir
         self.lr_scheduler_g = lr_scheduler_g
         self.lr_scheduler_d = lr_scheduler_d
-        self.device = device
         self.use_amp = use_amp
+        self.g_scaler = torch.amp.GradScaler(device_type=self.device.type, enabled=self.use_amp)
+        self.d_scaler = torch.amp.GradScaler(device_type=self.device.type, enabled=self.use_amp)
         
+        # 损失权重
         self.lambda_gp = lambda_gp
         self.l1_weight = l1_weight
         self.perceptual_weight = perceptual_weight
         self.adversarial_weight = adversarial_weight
-        self.entropy_weight = entropy_weight  # 增加熵正则化权重到0.3
-
-        self.checkpoint_path = checkpoint_path
-        self.sample_dir = sample_dir
-        os.makedirs(self.sample_dir, exist_ok=True)
-
+        self.entropy_weight = entropy_weight
+        
+        # 日志和检查点
+        self.log_interval = log_interval
         self.best_val_loss = float('inf')
         self.start_epoch = 1
-        self.log_interval = log_interval
         
-        # Early stopping attributes
-        self.early_stopping_counter = 0
+        # 确保样本目录存在
+        os.makedirs(self.sample_dir, exist_ok=True)
         
+        # 初始化步数计数器
+        self.steps = 0
+        
+        # 低使用率码元重置参数
+        self.reset_low_usage_interval = reset_low_usage_interval
+        self.reset_low_usage_percentage = reset_low_usage_percentage
+        
+        # 初始化感知损失
+        self.perceptual_loss = PerceptualLoss().to(device)
+
         # 码本监控相关
         self.codebook_stats = []
         self.max_codebook_size = 512  # 最大码本大小设置为512
         self.expansion_threshold = 0.8  # 码本利用率超过此值时扩展
-        
-        # Initialize LPIPS loss
-        self.perceptual_loss = LPIPS(net='vgg').to(self.device).eval()
-        for param in self.perceptual_loss.parameters():
-            param.requires_grad = False
-
-        # AMP Scalers (using the new torch.amp API)
-        self.g_scaler = torch.amp.GradScaler(self.device.type, enabled=self.use_amp)
-        self.d_scaler = torch.amp.GradScaler(self.device.type, enabled=self.use_amp)
-
-        # 低使用率码元重置参数
-        self.reset_low_usage_interval = reset_low_usage_interval
-        self.reset_low_usage_percentage = reset_low_usage_percentage
 
     def _train_batch(self, batch):
         real_imgs, _ = batch
