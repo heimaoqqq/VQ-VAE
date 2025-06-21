@@ -295,7 +295,8 @@ class VQGANTrainer:
         else:
             print("从头开始训练，或检查点不存在")
             self.start_epoch = 1
-            self.best_val_loss = float('inf')
+            # 对于熵值，越大越好，所以初始值应该是0
+            self.best_val_loss = 0.0
         
         # 打印训练配置
         print("\n=== 训练配置 ===")
@@ -367,38 +368,64 @@ class VQGANTrainer:
 
     def save_checkpoint(self, epoch, is_best=False):
         """
-        保存检查点，包含所有必要的训练状态
+        保存检查点
+        
+        参数:
+            epoch: 当前轮次
+            is_best: 是否为最佳模型
         """
+        # 确保目录存在
+        checkpoint_dir = os.path.dirname(self.checkpoint_path)
+        if not os.path.exists(checkpoint_dir):
+            os.makedirs(checkpoint_dir)
+            
+        # 获取当前码本统计信息
+        if hasattr(self.vqgan.quantize, 'get_codebook_stats'):
+            current_stats = self.vqgan.quantize.get_codebook_stats()
+            current_val_loss = current_stats.get('normalized_entropy', 0.0)
+            # 对于熵值，越大越好，所以如果当前值大于最佳值，则更新最佳值
+            if current_val_loss > self.best_val_loss:
+                self.best_val_loss = current_val_loss
+                is_best = True
+        
+        # 准备保存的数据
         checkpoint = {
             'epoch': epoch,
-            'best_val_loss': self.best_val_loss,
             'vqgan_state_dict': self.vqgan.state_dict(),
             'discriminator_state_dict': self.discriminator.state_dict(),
             'g_optimizer_state_dict': self.g_optimizer.state_dict(),
             'd_optimizer_state_dict': self.d_optimizer.state_dict(),
-            'g_scheduler_state_dict': self.lr_scheduler_g.state_dict() if self.lr_scheduler_g else None,
-            'd_scheduler_state_dict': self.lr_scheduler_d.state_dict() if self.lr_scheduler_d else None,
             'g_scaler_state_dict': self.g_scaler.state_dict(),
             'd_scaler_state_dict': self.d_scaler.state_dict(),
-            'codebook_stats': self.codebook_stats,
+            'best_val_loss': self.best_val_loss,
+            'codebook_stats': self.codebook_stats if hasattr(self, 'codebook_stats') else [],
             'model_config': {
                 'vq_num_embed': self.vqgan.quantize.num_embeddings,
-                'vq_embed_dim': self.vqgan.config['vq_embed_dim'],
-                'commitment_loss_beta': self.vqgan.config['commitment_loss_beta'],
-                'ema_decay': self.vqgan.config['ema_decay']
+                'vq_embed_dim': self.vqgan.config['vq_embed_dim']
             }
         }
         
-        if is_best:
-            torch.save(checkpoint, self.checkpoint_path)
-            print(f"已保存最佳模型检查点到 {self.checkpoint_path}")
+        # 添加学习率调度器状态（如果存在）
+        if self.lr_scheduler_g is not None:
+            checkpoint['g_scheduler_state_dict'] = self.lr_scheduler_g.state_dict()
+        if self.lr_scheduler_d is not None:
+            checkpoint['d_scheduler_state_dict'] = self.lr_scheduler_d.state_dict()
             
-            # 同时保存一个不包含优化器状态的轻量版检查点
-            light_checkpoint = {k: v for k, v in checkpoint.items() 
-                              if not any(x in k for x in ['optimizer', 'scheduler', 'scaler'])}
-            light_path = self.checkpoint_path.replace('.pt', '_light.pt')
+        # 保存检查点
+        torch.save(checkpoint, self.checkpoint_path)
+        print(f"检查点已保存到 {self.checkpoint_path}")
+        
+        # 如果是最佳模型，复制一份
+        if is_best:
+            best_path = self.checkpoint_path.replace('.pt', '_best.pt')
+            torch.save(checkpoint, best_path)
+            print(f"最佳模型已保存到 {best_path}")
+            
+            # 同时保存一个轻量版本（不包含优化器状态）
+            light_checkpoint = {k: v for k, v in checkpoint.items() if 'optimizer' not in k and 'scaler' not in k}
+            light_path = self.checkpoint_path.replace('.pt', '_best_light.pt')
             torch.save(light_checkpoint, light_path)
-            print(f"已保存轻量版检查点（不含优化器状态）到 {light_path}")
+            print(f"轻量版最佳模型已保存到 {light_path}")
 
     def _save_sample_images(self, epoch, originals, reconstructions):
         # 逆归一化函数，将[-1,1]范围的图像转回[0,1]范围
@@ -478,9 +505,10 @@ class VQGANTrainer:
             
             # 设置起始轮次
             self.start_epoch = checkpoint.get('epoch', 0) + 1
-            self.best_val_loss = checkpoint.get('best_val_loss', float('inf'))
+            # 对于熵值，越大越好，所以初始值应该是负无穷
+            self.best_val_loss = checkpoint.get('best_val_loss', 0.0)
             
-            print(f"从轮次 {self.start_epoch} 继续训练，最佳验证损失: {self.best_val_loss:.4f}")
+            print(f"从轮次 {self.start_epoch} 继续训练，最佳归一化熵: {self.best_val_loss:.4f}")
             return True
         except Exception as e:
             print(f"加载检查点时出错: {e}")
@@ -573,9 +601,9 @@ class VQGANTrainer:
             if reset_count > 0:
                 print(f"重置了 {reset_count} 个低使用率码元")
         
-        # 如果验证损失改善，保存模型
-        if len(self.codebook_stats) > 1 and self.codebook_stats[-2]['normalized_entropy'] > stats['normalized_entropy']:
-            print(f"验证损失从 {self.codebook_stats[-2]['normalized_entropy']:.4f} 改善到 {stats['normalized_entropy']:.4f}。保存模型...")
+        # 如果验证损失改善（归一化熵值增加表示码本使用更均衡），保存模型
+        if len(self.codebook_stats) > 1 and self.codebook_stats[-2]['normalized_entropy'] < stats['normalized_entropy']:
+            print(f"归一化熵从 {self.codebook_stats[-2]['normalized_entropy']:.4f} 改善到 {stats['normalized_entropy']:.4f}。保存模型...")
             self.save_checkpoint(epoch, is_best=True)
         elif len(self.codebook_stats) == 1:
             print(f"首次评估，归一化熵: {stats['normalized_entropy']:.4f}。保存模型...")
