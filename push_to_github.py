@@ -18,7 +18,7 @@ def push_to_github():
         return False
     
     # 提交更改
-    commit_message = "优化VQ-GAN训练：调整损失权重，实现渐进式码本扩展，解决码本坍塌问题"
+    commit_message = "添加VQ-VAE潜在空间分析工具：用于评估潜在空间质量及扩散适应性"
     if not run_command(f'git commit -m "{commit_message}"'):
         print("提交更改失败")
         return False

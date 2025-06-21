@@ -1,85 +1,139 @@
-# 微多普勒时频图数据增广系统 (VQ-GAN + LDM)
+# VQ-VAE 潜在空间分析工具
 
-本项目旨在构建一个两阶段的深度学习流程，用于生成高质量的微多普勒时频图，以实现有效的数据增广。系统首先训练一个**向量量化生成对抗网络（VQ-GAN）**，将高分辨率的时频图压缩到一个高质量的、离散的潜在空间中。随后，在这一潜在空间上训练一个**潜在扩散模型（LDM）**，以学习并生成全新的、多样化的时频图数据。
+这个项目提供了一套全面的分析工具，用于评估VQ-VAE模型潜在空间的质量，特别是针对下游扩散模型的应用场景。
 
-## 开发历程与技术选型
+## 项目背景
 
-本项目在开发过程中经历了一系列关键的技术迭代，最终方案是解决核心问题的最佳实践总结：
+VQ-VAE (Vector Quantized Variational AutoEncoder) 是一种强大的生成模型，能够将图像压缩到离散的潜在空间，并实现高质量的重建。然而，即使重建质量很好，潜在空间的结构和特性也可能不适合下游任务，特别是扩散模型。
 
-1.  **初始问题：LDM生成模糊**
-    项目最初采用标准的VQ-VAE + LDM架构。尽管VQ-VAE在视觉上重建效果良好，但以此为基础训练的LDM生成的图像却非常模糊，缺乏关键的高频细节。
+常见问题包括：
+- 潜在空间分布不均匀或不连续
+- 码本利用率低或分布不均
+- 潜在空间中的插值不平滑
+- 量化导致的信息丢失
 
-2.  **初步尝试：优化LDM架构**
-    我们首先怀疑是LDM的网络结构问题，并对其U-Net中的注意力机制进行了优化，但生成质量改善有限，表明问题根源不在于第二阶段的LDM。
+本项目旨在提供客观、可视化的评估手段，帮助识别和解决这些问题。
 
-3.  **核心突破：引入VQ-GAN**
-    通过分析相关领域的先进实践，我们断定，单纯依赖重建损失（如L1）和感知损失（LPIPS）的VQ-VAE，本质上难以完美还原真实数据中所有锐利的高频细节，这是导致LDM模糊的根本原因。解决方案是引入一个**对抗性判别器**，将VQ-VAE升级为**VQ-GAN**。判别器的存在会"强迫"生成器（即VQ-VAE的解码器）去学习和重建那些最精细、最锐利的细节，从而产生一个信息保真度极高的潜在空间。
+## 主要功能
 
-4.  **最终方案：构建自定义VQ-GAN模型**
-    在实现VQ-GAN的过程中，我们遇到了大量由Hugging Face `diffusers`库版本不兼容导致的问题（如模块初始化参数错误、内部数据流不匹配等）。为了彻底解决这些"黑盒"问题并获得对模型行为的完全控制，我们最终放弃了使用不稳定的高层`VQModel`封装，转而采用其经过充分测试的底层模块（`Encoder`, `Decoder`, `VectorQuantizer`），手动构建了一个我们自己的`CustomVQGAN`模型。这一最终方案稳定、可靠，且逻辑清晰。
+该工具包提供以下分析功能：
+
+1. **潜在空间分布分析**
+   - 分析潜在向量的统计特性
+   - 与正态分布的距离测量
+   - 维度间相关性分析
+
+2. **码本结构分析**
+   - 码本向量之间的距离分析
+   - 码本利用率评估
+   - 码本向量的可视化
+
+3. **潜在空间连续性分析**
+   - 插值平滑度评估
+   - 量化前后一致性测量
+   - 插值结果可视化
+
+4. **重建误差分析**
+   - 像素级和特征级误差分布
+   - 误差统计和可视化
+
+5. **综合扩散适应性评分**
+   - 基于多维指标的综合评分
+   - 针对性改进建议
+   - 雷达图可视化结果
+
+## 安装要求
+
+- Python 3.7+
+- PyTorch 1.8+
+- scikit-learn
+- matplotlib
+- seaborn
+- scipy
+- tqdm
+
+## 快速开始
+
+### 本地安装
+
+```bash
+# 克隆仓库
+git clone https://github.com/你的用户名/VQ-VAE.git
+cd VQ-VAE
+
+# 安装依赖
+pip install -r requirements.txt
+```
+
+### 使用方法
+
+```python
+# 基本用法
+from vqvae.latent_space_analyzer import LatentSpaceAnalyzer
+from vqvae.custom_vqgan import CustomVQGAN
+
+# 加载模型
+model = CustomVQGAN(**model_config)
+model.load_state_dict(torch.load('path/to/model.pt')['vqgan_state_dict'])
+
+# 创建分析器
+analyzer = LatentSpaceAnalyzer(model, device='cuda')
+
+# 运行综合分析
+report = analyzer.analyze_for_diffusion(dataloader)
+```
+
+### 命令行工具
+
+```bash
+python -m vqvae.diffusion_readiness_test \
+    --model_path path/to/model.pt \
+    --data_dir path/to/dataset \
+    --batch_size 32 \
+    --max_samples 1000
+```
+
+## 在Kaggle上使用
+
+1. 上传预训练模型到Kaggle数据集
+2. 在Kaggle笔记本中运行以下代码：
+
+```python
+# 克隆项目
+!git clone https://github.com/你的用户名/VQ-VAE.git
+!cp -r /kaggle/input/vq-gan/*.pt /kaggle/working/VQ-VAE/model/
+
+# 添加项目路径
+import sys
+sys.path.append('/kaggle/working/VQ-VAE')
+
+# 运行分析
+!python -m vqvae.diffusion_readiness_test \
+    --model_path /kaggle/input/vq-gan/vqgan_model_best_best.pt \
+    --data_dir /kaggle/input/your-dataset/images \
+    --batch_size 16 \
+    --max_samples 500
+```
 
 ## 项目结构
 
 ```
-.
-├── dataset/                      # 数据集目录
-├── vqvae/                        # VQ-GAN 模块
-│   ├── custom_vqgan.py           # ✅ 自定义的VQ-GAN模型实现 (核心)
-│   ├── discriminator.py          # ✅ PatchGAN判别器实现
-│   ├── vqgan_trainer.py          # ✅ VQ-GAN训练器 (含WGAN-GP损失)
-│   └── utils.py                  # 工具函数
-├── ldm/                          # LDM 模块 (后续阶段)
-│   └── ...
-├── dataset.py                    # 数据集加载和处理
-├── train_vqvae.py                # ✅ VQ-GAN 训练脚本
-├── train_ldm.py                  # LDM 扩散模型训练脚本 (后续阶段)
-└── requirements.txt              # 项目依赖
+VQ-VAE/
+├── vqvae/
+│   ├── latent_space_analyzer.py  # 潜在空间分析工具
+│   ├── diffusion_readiness_test.py  # 命令行工具
+│   ├── custom_vqgan.py  # VQ-GAN模型定义
+│   ├── ema_vector_quantizer.py  # EMA向量量化器
+│   ├── models/  # 模型组件
+│   └── README_latent_analysis.md  # 详细文档
+├── model/  # 预训练模型存放目录
+└── README.md  # 项目说明
 ```
 
-## 环境配置
+## 许可证
 
-```bash
-# 创建并激活conda环境
-conda create -n vqgan-ldm python=3.11
-conda activate vqgan-ldm
+MIT
 
-# 安装依赖
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-pip install -r requirements.txt
-```
+## 致谢
 
-## 训练流程
-
-### 1. 训练VQ-GAN模型
-
-此阶段的目标是获得一个高质量的自编码器。
-
-```bash
-python train_vqvae.py \
-  --data_dir "path/to/your/dataset" \
-  --output_dir "vqgan_model_output" \
-  --batch_size 8 \
-  --epochs 300 \
-  --lr 1e-4 \
-  --disc_lr 1e-4 \
-  --use_wandb
-```
-
-**主要参数说明 (`train_vqvae.py`):**
-
-- **路径参数**
-  - `--data_dir`: 数据集目录。
-  - `--output_dir`: 模型和日志的输出目录。
-- **数据参数**
-  - `--batch_size`: 批次大小 (推荐为8)。
-  - `--image_size`: 图像尺寸 (默认为256)。
-- **训练参数**
-  - `--epochs`: 训练轮数 (GAN通常需要较多轮数, e.g., 300)。
-  - `--lr`: 生成器（VQ-GAN）的学习率。
-  - `--disc_lr`: 判别器的学习率。
-- **模型结构参数**
-  - `--in_channels`, `--out_channels`: 输入/输出通道数 (彩色图为3)。
-  - `--latent_channels`: 潜在空间通道数 (默认为4)。
-  - `--vq_embed_dim`: 码本中每个编码向量的维度 (默认为256)。
-  - `--num_vq_embeddings`: 码本中编码的数量 (默认为1024)。
-  - `--block_out_channels`: VQ-GAN每个下采样块的输出通道 (e.g., `
+感谢所有为VQ-VAE和扩散模型研究做出贡献的研究者。
